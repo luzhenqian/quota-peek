@@ -79,7 +79,8 @@ final class AppModel: ObservableObject {
 
         let currentPreferences = preferences
         let key = SecretStore.read(account: "glm-api-key")
-        let probes = ProviderFactory.make(preferences: currentPreferences, glmAPIKey: key)
+        let grokCookie = SecretStore.read(account: "grok-cookie")
+        let probes = ProviderFactory.make(preferences: currentPreferences, glmAPIKey: key, grokCookie: grokCookie)
 
         let cliProbes = probes.filter { $0.source == .cli }
         let independentProbes = probes.filter { $0.source != .cli }
@@ -155,20 +156,12 @@ final class AppModel: ObservableObject {
         await refreshAll()
     }
 
-    func grokWebIsLoggedIn() -> Bool {
-        GrokWebSession.isLoggedIn
+    func saveGrokCookie(_ value: String) throws {
+        try SecretStore.save(value.trimmingCharacters(in: .whitespacesAndNewlines), account: "grok-cookie")
     }
 
-    func grokLogin() async {
-        await GrokWebSession.shared.presentLogin()
-        objectWillChange.send()
-        await refreshAll()
-    }
-
-    func grokLogout() async {
-        await GrokWebSession.shared.logout()
-        objectWillChange.send()
-        await refreshAll()
+    func hasGrokCookie() -> Bool {
+        SecretStore.read(account: "grok-cookie")?.isEmpty == false
     }
 
     func toggleFloatingPanel() {

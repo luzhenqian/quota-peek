@@ -75,25 +75,16 @@ final class ProviderParserTests: XCTestCase {
         XCTAssertEqual(weekly.remainingPercent, 70, accuracy: 0.01)
     }
 
-    func testGrokRateLimitsParsesModelWindows() throws {
-        let data = Data(#"""
-        {"loggedIn":true,"windows":[
-          {"label":"Grok 4","remaining":3,"total":7,"windowSizeSeconds":86400},
-          {"label":"Grok 4 Heavy","remaining":20,"total":20,"windowSizeSeconds":7200}
-        ]}
-        """#.utf8)
-        let snapshot = try GrokRateLimitParser.parse(data)
-        XCTAssertNil(snapshot.plan)
-        XCTAssertEqual(snapshot.windows.count, 2)
-        XCTAssertEqual(snapshot.windows[0].kind, .model("Grok 4"))
-        XCTAssertEqual(snapshot.windows[0].remainingPercent, 3.0 / 7.0 * 100, accuracy: 0.01)
-        XCTAssertEqual(snapshot.windows[1].kind, .model("Grok 4 Heavy"))
-        XCTAssertEqual(snapshot.windows[1].remainingPercent, 100, accuracy: 0.01)
+    func testGrokRateLimitWindowMapping() throws {
+        let data = Data(#"{"remainingQueries":3,"totalQueries":7,"windowSizeSeconds":86400}"#.utf8)
+        let window = try XCTUnwrap(GrokRateLimitParser.window(label: "Grok 4", from: data))
+        XCTAssertEqual(window.kind, .model("Grok 4"))
+        XCTAssertEqual(window.remainingPercent, 3.0 / 7.0 * 100, accuracy: 0.01)
     }
 
-    func testGrokNotLoggedInThrows() {
-        let data = Data(#"{"loggedIn":false,"windows":[]}"#.utf8)
-        XCTAssertThrowsError(try GrokRateLimitParser.parse(data))
+    func testGrokRateLimitZeroTotalSkipped() throws {
+        let data = Data(#"{"remainingQueries":0,"totalQueries":0,"windowSizeSeconds":86400}"#.utf8)
+        XCTAssertNil(try GrokRateLimitParser.window(label: "Grok 4", from: data))
     }
 
     func testClaudeUsageWithUsedAndLeftFormats() throws {

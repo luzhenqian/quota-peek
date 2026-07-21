@@ -4,6 +4,8 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var glmAPIKey = ""
     @State private var keyStatus = ""
+    @State private var grokCookie = ""
+    @State private var grokStatus = ""
 
     var body: some View {
         Form {
@@ -39,19 +41,24 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Grok 网页账号") {
+            Section("Grok") {
                 HStack {
-                    Text(model.grokWebIsLoggedIn() ? "已登录（网页额度接口）" : "未登录")
-                        .font(.caption)
-                        .foregroundStyle(model.grokWebIsLoggedIn() ? .green : .secondary)
-                    Spacer()
-                    if model.grokWebIsLoggedIn() {
-                        Button("退出登录") { Task { await model.grokLogout() } }
-                    } else {
-                        Button("登录 Grok 网页账号") { Task { await model.grokLogin() } }
+                    SecureField("grok.com Cookie（保存在 macOS 钥匙串）", text: $grokCookie)
+                        .textFieldStyle(.roundedBorder)
+                    Button("保存") {
+                        do {
+                            try model.saveGrokCookie(grokCookie)
+                            grokCookie = ""
+                            grokStatus = "已保存"
+                        } catch {
+                            grokStatus = error.localizedDescription
+                        }
                     }
                 }
-                Text("Grok 无官方 CLI，额度只在 grok.com 网页可查。登录后显示各模型的每日/滚动额度；免费账号显示免费层限额，SuperGrok 订阅显示更高额度。")
+                Text(grokStatus.isEmpty ? (model.hasGrokCookie() ? "已保存凭证" : "尚未配置凭证") : grokStatus)
+                    .font(.caption)
+                    .foregroundStyle(model.hasGrokCookie() ? .green : .secondary)
+                Text("Grok 无官方 CLI，内嵌登录会被 xAI 的 Cloudflare 拦。改为：浏览器登录 grok.com → 打开开发者工具（⌥⌘I）→ Network → 刷新 → 点任一 grok.com 请求 → Request Headers → 复制整段 Cookie 值粘贴到此。Cookie 会过期，失效后重新复制即可。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

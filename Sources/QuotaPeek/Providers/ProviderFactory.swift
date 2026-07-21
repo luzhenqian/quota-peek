@@ -1,7 +1,7 @@
 import Foundation
 
 enum ProviderFactory {
-    static func make(preferences: AppPreferences, glmAPIKey: String?) -> [any ProviderProbe] {
+    static func make(preferences: AppPreferences, glmAPIKey: String?, grokCookie: String?) -> [any ProviderProbe] {
         var probes: [any ProviderProbe] = []
         if preferences.codexEnabled {
             probes.append(CodexProbe(executablePath: preferences.codexExecutable))
@@ -20,8 +20,8 @@ enum ProviderFactory {
             probes.append(GLMProbe(baseURL: preferences.glmBaseURL, apiKey: glmAPIKey))
         }
         if preferences.grokEnabled {
-            // Grok 无 CLI，只有网页接口；未登录时探针会抛错提示去设置登录。
-            probes.append(GrokWebProbe())
+            // Grok 无 CLI；URLSession 直连 API，带用户粘贴的 grok.com Cookie。
+            probes.append(GrokProbe(cookie: grokCookie))
         }
         return probes
     }
