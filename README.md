@@ -2,7 +2,7 @@
 
 **所有大模型额度，一眼看清。**
 
-QuotaPeek 是一个本地优先的 macOS 菜单栏与桌面悬浮工具，把 Codex（ChatGPT）、Claude、Kimi、GLM Coding Plan 的订阅余量、额度窗口与刷新时间集中在一处显示。数据全部通过官方 CLI / 接口在本机获取，不经过任何第三方服务器。
+QuotaPeek 是一个本地优先的 macOS 菜单栏与桌面悬浮工具，把 Codex（ChatGPT）、Claude、Kimi、GLM Coding Plan、Grok 的订阅余量、额度窗口与刷新时间集中在一处显示。数据全部通过官方 CLI / 接口在本机获取，不经过任何第三方服务器。
 
 <img src="docs/screenshot.png" alt="QuotaPeek 悬浮面板" width="360">
 
@@ -17,7 +17,7 @@ QuotaPeek 是一个本地优先的 macOS 菜单栏与桌面悬浮工具，把 Co
   - 各额度窗口的**剩余百分比、进度条与刷新倒计时**。
 - 额度低于 **10% / 20% / 25%** 阈值时发送本地通知。
 - 自动刷新、本地缓存、错误状态保留（接口临时失败时仍显示上一份好数据）。
-- 凭证只存本机：GLM API Key 存 macOS 钥匙串，Kimi 网页登录态存 WKWebView 持久存储。
+- 凭证只存本机：GLM API Key 与 Grok Cookie 存 macOS 钥匙串，Kimi 网页登录态存 WKWebView 持久存储。
 
 ## 各家数据来源
 
@@ -29,6 +29,15 @@ QuotaPeek 不保存账号密码，也不把凭证或额度上传到任何服务�
 | **Claude** | 官方 Claude Code `/usage`（官方 CLI） | 安装 Claude Code 并登录 Pro/Max 订阅 |
 | **Kimi** | 默认走官方 Kimi CLI `/usage`（5 小时 / 每周）；在设置中登录 Kimi 网页账号后，改走官方会员接口（**额外显示套餐名与月度总额度**） | 安装 Kimi CLI 并登录；网页接口需在设置中登录一次 |
 | **GLM** | Coding Plan `/api/monitor/usage/quota/limit`（官方 API） | 在设置中保存 Coding Plan API Key |
+| **Grok** | grok.com `/rest/rate-limits`（官方 API，按模型的请求次数额度） | 在设置中粘贴从浏览器复制的 grok.com Cookie |
+
+### 关于 Grok 的数据源
+
+Grok 没有官方 CLI，订阅额度只在 grok.com 网页可查，而 xAI 用 **Cloudflare bot 防护**会拦截 app 内嵌 WebView（且 Google 登录也拒绝内嵌 WebView）。但 Cloudflare **只拦浏览器 challenge、不拦纯 API 调用**，所以 QuotaPeek 改用 `URLSession` 直连 `/rest/rate-limits`，带你从浏览器复制的登录 Cookie（存 macOS 钥匙串）。
+
+- Grok 按**请求次数**计额度，每个模型独立配额（免费层：Grok 4 每 24h 7 次、Grok 3 30 次、Grok 4 Heavy 每 2h 20 次；SuperGrok 订阅数值更高）。卡片直接显示 `剩 7/7` 原始次数。
+- 徽标按订阅层级分色：**Free**（灰）/ **SuperGrok**（紫），查 `/rest/subscriptions` 判断。
+- 获取 Cookie：浏览器登录 grok.com → 开发者工具（⌥⌘I）→ Network → 刷新 → 点任一 grok.com 请求 → Request Headers → 复制整段 Cookie 值粘贴到设置。**Cookie 会过期**，失效后卡片会提示，重新复制一次即可。
 
 ### 关于 Kimi 的两条数据源
 
@@ -85,6 +94,7 @@ open dist/QuotaPeek.app
 2. CLI 路径通常留空即可自动检测；也可填绝对路径。
 3. **Kimi 网页账号**：点「登录 Kimi 网页账号」，用平时的方式登录一次，即可显示套餐名与月度额度；点「退出登录」回退到 CLI。
 4. **GLM**：填写 Base URL（`https://open.bigmodel.cn` 或 `https://api.z.ai`）并保存 Coding Plan API Key。
+5. **Grok**：从浏览器开发者工具复制 grok.com 的 Cookie 粘贴保存（详见上方「关于 Grok 的数据源」）。
 5. 设置刷新间隔、低额度阈值、是否启动即显示悬浮面板。
 
 如果 GLM 凭证已配置在 `~/.claude/settings.json` 的 `ANTHROPIC_AUTH_TOKEN` 中，QuotaPeek 也会自动读取该本地配置。
@@ -96,7 +106,7 @@ Sources/QuotaPeek/
 ├── App             应用状态、菜单栏与悬浮窗口
 ├── Domain          统一额度模型、套餐分级、偏好与解析工具
 ├── Infrastructure  进程执行、Keychain、本地缓存、Kimi 网页会话
-├── Providers       Codex、Claude、Kimi(CLI/网页)、GLM 适配器
+├── Providers       Codex、Claude、Kimi(CLI/网页)、GLM、Grok 适配器
 └── UI              Dashboard 与设置界面
 ```
 
