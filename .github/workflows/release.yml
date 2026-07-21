@@ -1,0 +1,70 @@
+name: Release
+
+# 推送 v* tag（如 v0.1.0）时，自动构建、签名、公证并发布 DMG。
+# 需要在仓库 Settings → Secrets and variables → Actions 配置下列 secrets：
+#   MACOS_CERT_P12_BASE64  Developer ID Application 证书（.p12）的 base64
+#                          导出：钥匙串 → 导出 .p12 → base64 -i cert.p12 | pbcopy
+#   MACOS_CERT_PASSWORD    导出 .p12 时设的密码
+#   MACOS_CERT_IDENTITY    "Developer ID Application: Noah Lu (8HVB4A3SJ7)"
+#   KEYCHAIN_PASSWORD      任意字符串（CI 临时钥匙串口令）
+#   NOTARY_KEY_P8_BASE64   App Store Connect API Key（AuthKey_XXXX.p8）的 base64
+#   NOTARY_KEY_ID          该 Key 的 Key ID
+#   NOTARY_ISSUER_ID       App Store Connect 的 Issuer ID
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PWD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KC_PWD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_B64" | base64 -d > /tmp/cert.p12
+          security create-keychain -p "$KC_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KC_PWD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PWD" build.keychain >/dev/null
+          rm /tmp/cert.p12
+
+      - name: Build, sign, notarize, package DMG
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "${{ secrets.NOTARY_KEY_P8_BASE64 }}" | base64 -d > /tmp/notary.p8
+          NOTARY_KEY=/tmp/notary.p8 scripts/release.sh
+          rm /tmp/notary.p8
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/QuotaPeek.dmg \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

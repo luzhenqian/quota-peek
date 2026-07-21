@@ -43,11 +43,19 @@ Kimi CLI 的 `/usage` 只暴露 5 小时和每周两档，拿不到套餐名和�
 
 普通 ChatGPT 网页聊天的模型消息数没有稳定的公开查询接口，因此 Codex 卡片显示的是 ChatGPT 套餐内的 Codex / Agentic 额度，不代表普通对话的剩余消息数。
 
+## 下载安装
+
+从 [Releases](https://github.com/luzhenqian/quota-peek/releases) 下载最新的 `QuotaPeek.dmg`，打开后把 **余量.app** 拖进「应用程序」即可。发布版经过 Developer ID 签名与 Apple 公证，双击直接打开。
+
+> QuotaPeek 是菜单栏 App（无 Dock 图标）。启动后在屏幕右上角菜单栏找它的仪表盘图标。
+>
+> 想自己出签名+公证的发布版，见 [`docs/RELEASING.md`](docs/RELEASING.md)。（App Store 因沙盒与「调用本机 CLI」的架构冲突无法上架，故走 Developer ID 直接分发。）
+
 ## 系统要求
 
 - macOS 14 或更高版本
-- Swift 6.2+（或 Xcode 26+）
 - 对应 Provider 的官方 CLI（按需安装）
+- 从源码构建需 Swift 6.2+（或 Xcode 26+）
 
 ## 构建与运行
 
