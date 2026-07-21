@@ -5,6 +5,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
     var claudeEnabled = true
     var kimiEnabled = true
     var glmEnabled = true
+    var grokEnabled = true
 
     var codexExecutable = ""
     var claudeExecutable = ""
@@ -16,12 +17,34 @@ struct AppPreferences: Codable, Equatable, Sendable {
     var notificationsEnabled = true
     var floatingPanelEnabled = true
 
+    init() {}
+
+    /// 容错解码：任何字段缺失都回退默认值，保证新增字段时旧偏好数据不整体失效。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppPreferences()
+        codexEnabled = try c.decodeIfPresent(Bool.self, forKey: .codexEnabled) ?? d.codexEnabled
+        claudeEnabled = try c.decodeIfPresent(Bool.self, forKey: .claudeEnabled) ?? d.claudeEnabled
+        kimiEnabled = try c.decodeIfPresent(Bool.self, forKey: .kimiEnabled) ?? d.kimiEnabled
+        glmEnabled = try c.decodeIfPresent(Bool.self, forKey: .glmEnabled) ?? d.glmEnabled
+        grokEnabled = try c.decodeIfPresent(Bool.self, forKey: .grokEnabled) ?? d.grokEnabled
+        codexExecutable = try c.decodeIfPresent(String.self, forKey: .codexExecutable) ?? d.codexExecutable
+        claudeExecutable = try c.decodeIfPresent(String.self, forKey: .claudeExecutable) ?? d.claudeExecutable
+        kimiExecutable = try c.decodeIfPresent(String.self, forKey: .kimiExecutable) ?? d.kimiExecutable
+        glmBaseURL = try c.decodeIfPresent(String.self, forKey: .glmBaseURL) ?? d.glmBaseURL
+        refreshIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? d.refreshIntervalMinutes
+        notificationThreshold = try c.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? d.notificationThreshold
+        notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
+        floatingPanelEnabled = try c.decodeIfPresent(Bool.self, forKey: .floatingPanelEnabled) ?? d.floatingPanelEnabled
+    }
+
     func isEnabled(_ provider: ProviderID) -> Bool {
         switch provider {
         case .codex: codexEnabled
         case .claude: claudeEnabled
         case .kimi: kimiEnabled
         case .glm: glmEnabled
+        case .grok: grokEnabled
         }
     }
 }

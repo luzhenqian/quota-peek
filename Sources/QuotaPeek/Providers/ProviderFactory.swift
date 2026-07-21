@@ -19,6 +19,10 @@ enum ProviderFactory {
         if preferences.glmEnabled {
             probes.append(GLMProbe(baseURL: preferences.glmBaseURL, apiKey: glmAPIKey))
         }
+        if preferences.grokEnabled {
+            // Grok 无 CLI，只有网页接口；未登录时探针会抛错提示去设置登录。
+            probes.append(GrokWebProbe())
+        }
         return probes
     }
 }

@@ -5,6 +5,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
     case claude
     case kimi
     case glm
+    case grok
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: "Claude"
         case .kimi: "Kimi"
         case .glm: "GLM Coding Plan"
+        case .grok: "Grok"
         }
     }
 
@@ -23,6 +25,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: "Claude"
         case .kimi: "Kimi"
         case .glm: "GLM"
+        case .grok: "Grok"
         }
     }
 
@@ -32,6 +35,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: "brain.head.profile"
         case .kimi: "moon.stars.fill"
         case .glm: "cube.transparent.fill"
+        case .grok: "bolt.horizontal.fill"
         }
     }
 
@@ -41,6 +45,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: "claude"
         case .kimi: "kimi"
         case .glm: "zhipu"
+        case .grok: "grok"
         }
     }
 
@@ -49,6 +54,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
     /// - Claude:        free < pro < max < team < enterprise（pro 入门，max 顶级）
     /// - Kimi:          adagio/andante < moderato < allegretto < allegro < vivace
     /// - GLM:           lite < pro < max（pro 中端，max 顶级）
+    /// - Grok:          free < supergrok < supergrok heavy（heavy 顶级）
     func planTier(for plan: String) -> PlanTier {
         let p = plan.lowercased()
         switch self {
@@ -71,6 +77,10 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .glm:
             if p.contains("max") || p.contains("ultra") { return .top }
             if p.contains("pro") { return .mid }
+            return .base
+        case .grok:
+            if p.contains("heavy") { return .top }
+            if p.contains("super") { return .high }
             return .base
         }
     }

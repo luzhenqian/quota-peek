@@ -185,7 +185,8 @@ final class KimiWebSession: NSObject {
     }
 }
 
-private final class LoadDelegate: NSObject, WKNavigationDelegate {
+/// WKWebView 导航完成的一次性 continuation delegate，KimiWebSession / GrokWebSession 共用。
+final class LoadDelegate: NSObject, WKNavigationDelegate {
     private let onFinish: () -> Void
     private var fired = false
     init(_ onFinish: @escaping () -> Void) { self.onFinish = onFinish }

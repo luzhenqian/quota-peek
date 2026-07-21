@@ -155,6 +155,22 @@ final class AppModel: ObservableObject {
         await refreshAll()
     }
 
+    func grokWebIsLoggedIn() -> Bool {
+        GrokWebSession.isLoggedIn
+    }
+
+    func grokLogin() async {
+        await GrokWebSession.shared.presentLogin()
+        objectWillChange.send()
+        await refreshAll()
+    }
+
+    func grokLogout() async {
+        await GrokWebSession.shared.logout()
+        objectWillChange.send()
+        await refreshAll()
+    }
+
     func toggleFloatingPanel() {
         if FloatingPanelManager.shared.isVisible {
             FloatingPanelManager.shared.hide()
@@ -186,7 +202,7 @@ final class AppModel: ObservableObject {
         switch provider {
         case .codex: .localRPC
         case .claude, .kimi: .cli
-        case .glm: .officialAPI
+        case .glm, .grok: .officialAPI
         }
     }
 

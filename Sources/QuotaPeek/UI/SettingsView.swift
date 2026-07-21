@@ -12,6 +12,7 @@ struct SettingsView: View {
                 Toggle("Claude", isOn: $model.preferences.claudeEnabled)
                 Toggle("Kimi", isOn: $model.preferences.kimiEnabled)
                 Toggle("GLM Coding Plan", isOn: $model.preferences.glmEnabled)
+                Toggle("Grok", isOn: $model.preferences.grokEnabled)
             }
 
             Section("CLI 路径（留空自动检测）") {
@@ -34,6 +35,23 @@ struct SettingsView: View {
                     }
                 }
                 Text("登录后 Kimi 卡片改用网页会员接口，一次显示每月/每周/5 小时额度与套餐名；登录状态保存在本机，token 刷新由 Kimi 网页会话自动完成。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Grok 网页账号") {
+                HStack {
+                    Text(model.grokWebIsLoggedIn() ? "已登录（网页额度接口）" : "未登录")
+                        .font(.caption)
+                        .foregroundStyle(model.grokWebIsLoggedIn() ? .green : .secondary)
+                    Spacer()
+                    if model.grokWebIsLoggedIn() {
+                        Button("退出登录") { Task { await model.grokLogout() } }
+                    } else {
+                        Button("登录 Grok 网页账号") { Task { await model.grokLogin() } }
+                    }
+                }
+                Text("Grok 无官方 CLI，额度只在 grok.com 网页可查。登录后显示各模型的每日/滚动额度；免费账号显示免费层限额，SuperGrok 订阅显示更高额度。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

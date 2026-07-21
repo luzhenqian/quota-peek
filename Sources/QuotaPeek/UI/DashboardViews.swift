@@ -315,6 +315,7 @@ private struct ProviderCard: View {
         case .claude: colors = [.orange, .pink]
         case .kimi: colors = [.indigo, .purple]
         case .glm: colors = [.blue, .cyan]
+        case .grok: colors = [Color(white: 0.35), Color(white: 0.1)]
         }
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
