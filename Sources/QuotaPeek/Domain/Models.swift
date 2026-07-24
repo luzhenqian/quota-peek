@@ -107,6 +107,17 @@ enum QuotaWindowKind: Hashable, Codable, Sendable {
         case .tools: "MCP / 工具"
         }
     }
+
+    /// 展示 / 推荐优先级：月 > 周 > 5 小时等短周期 > MCP工具 > 具体模型分项。数值越小优先级越高。
+    var displayPriority: Int {
+        switch self {
+        case .monthly: 0
+        case .weekly: 1
+        case .session: 2
+        case .tools: 3
+        case .model: 4
+        }
+    }
 }
 
 struct QuotaWindow: Identifiable, Hashable, Codable, Sendable {
@@ -166,6 +177,16 @@ struct ProviderSnapshot: Identifiable, Hashable, Codable, Sendable {
 
     var minimumRemainingPercent: Double? {
         windows.map(\.remainingPercent).min()
+    }
+
+    /// 该卡片最应该被关注的窗口：优先级最高的一个（月 > 周 > ...），同优先级保留原始顺序。
+    var headlineWindow: QuotaWindow? {
+        windows.enumerated()
+            .min { lhs, rhs in
+                let (lp, rp) = (lhs.element.kind.displayPriority, rhs.element.kind.displayPriority)
+                return lp != rp ? lp < rp : lhs.offset < rhs.offset
+            }
+            .map(\.element)
     }
 
     var isStale: Bool {

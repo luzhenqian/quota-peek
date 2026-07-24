@@ -59,7 +59,10 @@ enum KimiUsageParser {
             guard let remaining = candidates.compactMap(TextParsing.percentRemaining).first else { continue }
             let resetText = candidates.first(where: { $0.localizedCaseInsensitiveContains("reset") })?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let resetsAt = resetText.flatMap { TextParsing.relativeResetDate(from: $0, now: capturedAt) }
+            let resetsAt = resetText.flatMap { text in
+                TextParsing.relativeResetDate(from: text, now: capturedAt)
+                    ?? TextParsing.absoluteResetDate(from: text, now: capturedAt)
+            }
             windows.append(QuotaWindow(
                 kind: definition.kind,
                 remainingPercent: remaining,

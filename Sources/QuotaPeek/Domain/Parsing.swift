@@ -53,6 +53,61 @@ enum TextParsing {
         return seconds > 0 ? now.addingTimeInterval(seconds) : nil
     }
 
+    /// 解析绝对时钟格式的重置文案,如 Claude CLI 的 "Resets 2:20am (Asia/Shanghai)"
+    /// 或 "Resets Jul 27 at 4:59am (Asia/Shanghai)"。relativeResetDate 只认 "in 2h 15m"
+    /// 这种相对表述,遇到绝对时钟就会解析失败,导致这类窗口显示原始英文而不是统一的倒计时文案。
+    static func absoluteResetDate(from text: String, now: Date = Date()) -> Date? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?:([A-Za-z]{3,9})\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)(?:\s*\(([A-Za-z_]+/[A-Za-z_]+)\))?"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else { return nil }
+
+        func group(_ index: Int) -> String? {
+            guard match.numberOfRanges > index, let r = Range(match.range(at: index), in: text) else { return nil }
+            return String(text[r])
+        }
+
+        guard var hour = group(3).flatMap(Int.init) else { return nil }
+        let minute = group(4).flatMap(Int.init) ?? 0
+        switch group(5)?.lowercased() {
+        case "pm" where hour != 12: hour += 12
+        case "am" where hour == 12: hour = 0
+        default: break
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = group(6).flatMap(TimeZone.init(identifier:)) ?? .current
+
+        if let monthName = group(1), let day = group(2).flatMap(Int.init), let month = monthNumber(monthName) {
+            let year = calendar.component(.year, from: now)
+            var components = DateComponents(year: year, month: month, day: day, hour: hour, minute: minute)
+            guard var date = calendar.date(from: components) else { return nil }
+            if date < now.addingTimeInterval(-3_600) {
+                components.year = year + 1
+                date = calendar.date(from: components) ?? date
+            }
+            return date
+        }
+
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = hour
+        components.minute = minute
+        guard var date = calendar.date(from: components) else { return nil }
+        if date <= now {
+            date = calendar.date(byAdding: .day, value: 1, to: date) ?? date
+        }
+        return date
+    }
+
+    private static func monthNumber(_ name: String) -> Int? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let prefix = name.prefix(3)
+        return formatter.shortMonthSymbols?.firstIndex { $0.caseInsensitiveCompare(prefix) == .orderedSame }.map { $0 + 1 }
+    }
+
     static func resetText(near index: Int, lines: [String], lookAhead: Int = 12) -> String? {
         for line in lines.dropFirst(index).prefix(lookAhead) {
             if line.localizedCaseInsensitiveContains("reset") {

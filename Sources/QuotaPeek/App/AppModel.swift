@@ -36,8 +36,8 @@ final class AppModel: ObservableObject {
         ProviderID.allCases.filter(preferences.isEnabled)
     }
 
-    var visibleSnapshots: [ProviderSnapshot] {
-        enabledProviders.map { provider in
+    private var baseSnapshots: [ProviderSnapshot] {
+        enabledProviders.map { provider -> ProviderSnapshot in
             if let snapshot = snapshots.first(where: { $0.provider == provider }) {
                 return snapshot
             }
@@ -47,6 +47,43 @@ final class AppModel: ObservableObject {
                 source: defaultSource(for: provider)
             )
         }
+    }
+
+    /// 各家额度到期不结转，未用完就浪费。优先推荐"头号指标"（月>周>...）里
+    /// 剩余多、又快要刷新的那家 —— 剩余多说明有空间可用，快刷新说明再不用就要被清零，两者都高的最该优先用。
+    /// 剩余量与刷新紧迫度（24 小时为半衰尺度，一天内权重接近 1，快到一周时权重降到 0.15 左右）相乘得分。
+    var recommendedProvider: ProviderID? {
+        Self.recommendedProvider(among: baseSnapshots)
+    }
+
+    var visibleSnapshots: [ProviderSnapshot] {
+        let base = baseSnapshots
+        guard let recommended = recommendedProvider,
+              let index = base.firstIndex(where: { $0.provider == recommended }), index != 0 else {
+            return base
+        }
+        var reordered = base
+        reordered.insert(reordered.remove(at: index), at: 0)
+        return reordered
+    }
+
+    private static func recommendedProvider(among snapshots: [ProviderSnapshot]) -> ProviderID? {
+        let now = Date()
+        let scored = snapshots.compactMap { snapshot -> (ProviderID, Double)? in
+            recommendationScore(for: snapshot, now: now).map { (snapshot.provider, $0) }
+        }
+        return scored.max(by: { $0.1 < $1.1 })?.0
+    }
+
+    private static func recommendationScore(for snapshot: ProviderSnapshot, now: Date) -> Double? {
+        guard let window = snapshot.headlineWindow, window.remainingPercent > 0 else { return nil }
+        guard let resetsAt = window.resetsAt else {
+            // 不知道具体刷新时间（如 Grok 的滚动窗口），按中性紧迫度处理，既不抢跑也不被埋没。
+            return window.remainingPercent * 0.5
+        }
+        let hoursUntilReset = max(0, resetsAt.timeIntervalSince(now) / 3_600)
+        let urgency = 24 / (24 + hoursUntilReset)
+        return window.remainingPercent * urgency
     }
 
     var overallRemainingPercent: Double? {

@@ -148,4 +148,60 @@ final class ProviderParserTests: XCTestCase {
         let expected: TimeInterval = 1_000 + 172_800 + 10_800 + 900
         XCTAssertEqual(result?.timeIntervalSince1970, expected)
     }
+
+    func testAbsoluteResetParsingTimeOnly() throws {
+        // "2026-07-25 20:00 Asia/Shanghai" 之后解析 "Resets 2:20am (Asia/Shanghai)" 应落在次日凌晨。
+        var calendar = Calendar(identifier: .gregorian)
+        let shanghai = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        calendar.timeZone = shanghai
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 25, hour: 20, minute: 0)))
+
+        let result = TextParsing.absoluteResetDate(from: "Resets 2:20am (Asia/Shanghai)", now: now)
+        let expected = calendar.date(from: DateComponents(year: 2026, month: 7, day: 26, hour: 2, minute: 20))
+
+        XCTAssertEqual(result, expected)
+    }
+
+    func testAbsoluteResetParsingWithMonthDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        let shanghai = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        calendar.timeZone = shanghai
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 25, hour: 20, minute: 0)))
+
+        let result = TextParsing.absoluteResetDate(from: "Resets Jul 27 at 4:59am (Asia/Shanghai)", now: now)
+        let expected = calendar.date(from: DateComponents(year: 2026, month: 7, day: 27, hour: 4, minute: 59))
+
+        XCTAssertEqual(result, expected)
+    }
+
+    func testAbsoluteResetParsingWithMonthDayNoMinutes() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        let shanghai = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        calendar.timeZone = shanghai
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 25, hour: 20, minute: 0)))
+
+        let result = TextParsing.absoluteResetDate(from: "Resets Jul 27 at 5am (Asia/Shanghai)", now: now)
+        let expected = calendar.date(from: DateComponents(year: 2026, month: 7, day: 27, hour: 5, minute: 0))
+
+        XCTAssertEqual(result, expected)
+    }
+
+    func testClaudeUsageWithAbsoluteResetTimes() throws {
+        let output = """
+        Opus 4.6 · Claude Max
+        Current session
+        ██████ 86% left
+        Resets 2:20am (Asia/Shanghai)
+        Current week (all models)
+        ███ 25% left
+        Resets Jul 27 at 4:59am (Asia/Shanghai)
+        Current week (Fable
+        13% left
+        Resets Jul 27 at 5am (Asia/Shanghai)
+        """
+
+        let snapshot = try ClaudeUsageParser.parse(output)
+        XCTAssertEqual(snapshot.windows.count, 3)
+        XCTAssertTrue(snapshot.windows.allSatisfy { $0.resetsAt != nil })
+    }
 }
