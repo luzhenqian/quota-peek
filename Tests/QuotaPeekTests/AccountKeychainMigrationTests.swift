@@ -50,4 +50,51 @@ final class AccountKeychainMigrationTests: XCTestCase {
             )
         }
     }
+
+    func testManagedDirectoryRejectsSymlinkedAccountsRoot() throws {
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: temporaryRoot) }
+
+        let realAccounts = temporaryRoot.appendingPathComponent("RealAccounts", isDirectory: true)
+        let linkedAccounts = temporaryRoot.appendingPathComponent("Accounts", isDirectory: true)
+        try fileManager.createDirectory(at: realAccounts, withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(at: linkedAccounts, withDestinationURL: realAccounts)
+
+        let id = UUID()
+        let storedPath = linkedAccounts.appendingPathComponent(id.uuidString, isDirectory: true).path
+        XCTAssertNil(
+            ManagedAccountDirectory.removableURL(
+                accountID: id,
+                storedPath: storedPath,
+                accountsDirectory: linkedAccounts
+            )
+        )
+    }
+
+    func testManagedDirectoryRejectsSymlinkedAccountDirectory() throws {
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: temporaryRoot) }
+
+        let accounts = temporaryRoot.appendingPathComponent("Accounts", isDirectory: true)
+        let outside = temporaryRoot.appendingPathComponent("Outside", isDirectory: true)
+        try fileManager.createDirectory(at: accounts, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: outside, withIntermediateDirectories: true)
+
+        let id = UUID()
+        let linkedAccount = accounts.appendingPathComponent(id.uuidString, isDirectory: true)
+        try fileManager.createSymbolicLink(at: linkedAccount, withDestinationURL: outside)
+        XCTAssertNil(
+            ManagedAccountDirectory.removableURL(
+                accountID: id,
+                storedPath: linkedAccount.path,
+                accountsDirectory: accounts
+            )
+        )
+    }
 }

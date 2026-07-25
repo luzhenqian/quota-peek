@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import UserNotifications
 import WebKit
 
@@ -21,7 +22,17 @@ enum ManagedAccountDirectory {
             .appendingPathComponent(accountID.uuidString, isDirectory: true)
             .standardizedFileURL
         let stored = URL(fileURLWithPath: storedPath, isDirectory: true).standardizedFileURL
-        return stored == expected ? expected : nil
+        guard stored == expected else { return nil }
+
+        // `removeItem` recursively follows the directory path. Reject both a symlinked
+        // Accounts root and a symlink at/under the account path rather than allowing the
+        // preference to redirect deletion outside QuotaPeek's managed tree.
+        let standardizedRoot = accountsDirectory.standardizedFileURL
+        guard standardizedRoot.resolvingSymlinksInPath() == standardizedRoot,
+              stored.resolvingSymlinksInPath() == stored else {
+            return nil
+        }
+        return expected
     }
 }
 
@@ -51,6 +62,10 @@ final class AppModel: ObservableObject {
         .appendingPathComponent("QuotaPeek", isDirectory: true)
         .appendingPathComponent("Accounts", isDirectory: true)
     private static let keychainMigrationFlag = "QuotaPeek.migratedAccountKeychain.v1"
+    private static let logger = Logger(
+        subsystem: "com.quotapeek.app",
+        category: "account-cleanup"
+    )
     private var kimiWebSessions: [UUID: KimiWebSession] = [:]
 
     private init() {
@@ -304,7 +319,11 @@ final class AppModel: ObservableObject {
                 }
             } else {
                 Task {
-                    try? await WKWebsiteDataStore.remove(forIdentifier: id)
+                    await Self.removeKimiDataStore(
+                        identifier: id,
+                        loginFlagKey: flagKey,
+                        cachedSession: session
+                    )
                 }
             }
         }
@@ -314,6 +333,52 @@ final class AppModel: ObservableObject {
         preferences = updated
         snapshots.removeAll { $0.accountID == id }
         SnapshotStore.save(snapshots)
+    }
+
+    private static func removeKimiDataStore(
+        identifier: UUID,
+        loginFlagKey: String,
+        cachedSession: KimiWebSession?
+    ) async {
+        // Clear Kimi records first, then release AppModel's last known session/store owner.
+        // An in-flight refresh may still retain the probe temporarily, so identifier removal
+        // uses bounded backoff instead of permanently leaking the store after one busy error.
+        var session: KimiWebSession? = cachedSession ?? KimiWebSession(
+            dataStore: WKWebsiteDataStore(forIdentifier: identifier),
+            loginFlagKey: loginFlagKey
+        )
+        await session?.logout()
+        session = nil
+        UserDefaults.standard.removeObject(forKey: loginFlagKey)
+
+        let retryDelays: [Duration] = [
+            .zero,
+            .milliseconds(500),
+            .seconds(1),
+            .seconds(2),
+            .seconds(4),
+            .seconds(8)
+        ]
+        var finalError: Error?
+        for delay in retryDelays {
+            if delay != .zero {
+                try? await Task.sleep(for: delay)
+            }
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: identifier)
+                UserDefaults.standard.removeObject(forKey: loginFlagKey)
+                return
+            } catch {
+                finalError = error
+            }
+        }
+
+        if let finalError {
+            UserDefaults.standard.removeObject(forKey: loginFlagKey)
+            logger.error(
+                "Failed to remove Kimi data store \(identifier.uuidString, privacy: .public) after retries: \(finalError.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     func saveSecret(_ value: String, for account: ProviderAccount) throws {
