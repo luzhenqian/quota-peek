@@ -628,7 +628,7 @@ git commit -m "feat: AppPreferences 新增账号数组，旧版配置幂等迁�
 
 **Interfaces:**
 - Consumes: 无新依赖。
-- Produces: `KimiWebSession.init(dataStore: WKWebsiteDataStore, loginFlagKey: String)`、实例属性 `isLoggedIn: Bool`（原来是 `nonisolated static var`，现在是普通 `@MainActor` 实例属性）、`KimiWebSession.legacyLoggedInDefaultsKey: String`（原来的固定 UserDefaults key，改名保留给 `.shared` 用）。`KimiWebSession.shared` 依然存在，指向绑定 `.default()` data store 的实例，供 Task 9 之前的所有旧调用方保持编译通过。Task 10 会新增按账号取 `KimiWebSession` 实例的逻辑，届时 `.shared` 就不再被引用，可以留着当兼容出口，不强制删除。
+- Produces: `KimiWebSession.init(dataStore: WKWebsiteDataStore, loginFlagKey: String)`、实例属性 `isLoggedIn: Bool`（原来是 `nonisolated static var`，现在是普通 `@MainActor` 实例属性）、`KimiWebSession.legacyLoggedInDefaultsKey: String`（原来的固定 UserDefaults key，改名保留给 `.shared` 用）、`ProviderFactory` 整个 enum 标成 `@MainActor`（`isLoggedIn` 从 `nonisolated static var` 变成普通实例属性后，读它的地方都需要 MainActor 上下文，`ProviderFactory.make` 唯一的调用方 `AppModel.refreshAll()` 本来就是 `@MainActor`，标注只是让编译器认可这个既有前提）。`KimiWebSession.shared` 依然存在，指向绑定 `.default()` data store 的实例，供 Task 9 之前的所有旧调用方保持编译通过。Task 10 会新增按账号取 `KimiWebSession` 实例的逻辑，届时 `.shared` 就不再被引用，可以留着当兼容出口，不强制删除。
 
 **这一步没有自动化测试**——`KimiWebSession` 整个包在 `WKWebView` 上，本仓库现有做法（见 `docs/superpowers/specs/2026-07-21-kimi-web-session-design.md` 的"测试"一节）就是不测这层，靠真机手工验证登录/刷新。本任务只用编译通过 + 手工冒烟来验收。
 
@@ -751,11 +751,17 @@ final class KimiWebSession: NSObject {
     }
 ```
 
-- [ ] **Step 3: 修 `ProviderFactory.swift` 里同样的引用**
+- [ ] **Step 3: 修 `ProviderFactory.swift` 里同样的引用，并把整个 enum 标成 `@MainActor`**
+
+`isLoggedIn` 从"读 UserDefaults、`nonisolated` 可从任何上下文访问的 static var"变成了普通的 `@MainActor` 实例属性（Step 1 已经这么改了）。`ProviderFactory.make` 目前是个普通同步函数，读 `KimiWebSession.shared.isLoggedIn` 需要 MainActor 上下文——它唯一的调用方 `AppModel.refreshAll()` 本来就是 `@MainActor`（同 actor 内调用不需要 `await`），所以把整个 `enum ProviderFactory` 标成 `@MainActor` 只是让编译器认可这个既有前提，不改变实际执行时机。（Task 8 会在这个已经是 `@MainActor` 的 enum 上追加一个新函数，不需要重复标注。）
 
 `Sources/QuotaPeek/Providers/ProviderFactory.swift`，原来：
 
 ```swift
+enum ProviderFactory {
+    static func make(preferences: AppPreferences, glmAPIKey: String?, grokCookie: String?) -> [any ProviderProbe] {
+        var probes: [any ProviderProbe] = []
+        ...
         if preferences.kimiEnabled {
             if KimiWebSession.isLoggedIn {
                 probes.append(KimiWebProbe())
@@ -768,6 +774,11 @@ final class KimiWebSession: NSObject {
 改成：
 
 ```swift
+@MainActor
+enum ProviderFactory {
+    static func make(preferences: AppPreferences, glmAPIKey: String?, grokCookie: String?) -> [any ProviderProbe] {
+        var probes: [any ProviderProbe] = []
+        ...
         if preferences.kimiEnabled {
             if KimiWebSession.shared.isLoggedIn {
                 probes.append(KimiWebProbe())
@@ -776,6 +787,8 @@ final class KimiWebSession: NSObject {
             }
         }
 ```
+
+（`...` 处省略的 codex/claude/glm/grok 分支和函数收尾原样不动，只加顶部的 `@MainActor` 和这一处 `KimiWebSession.isLoggedIn` → `KimiWebSession.shared.isLoggedIn`。）
 
 - [ ] **Step 4: 编译确认通过**
 
@@ -1293,7 +1306,7 @@ extension ProviderFactory {
 }
 ```
 
-`@MainActor` 标注是因为 `kimiWebSession(account)` 返回的 `KimiWebSession` 是 `@MainActor` 类型，读它的 `isLoggedIn` 需要 MainActor 上下文——这个函数本来就只从 `AppModel`（`@MainActor`）里同步调用，标注只是让编译器认可这个既有前提，不改变实际执行时机。
+`@MainActor` 标注是因为 `kimiWebSession(account)` 返回的 `KimiWebSession` 是 `@MainActor` 类型，读它的 `isLoggedIn` 需要 MainActor 上下文——这个函数本来就只从 `AppModel`（`@MainActor`）里同步调用，标注只是让编译器认可这个既有前提，不改变实际执行时机。（Task 5 已经把 `enum ProviderFactory` 整体标成了 `@MainActor`，这里显式再标一次是冗余但无害的——editor/编译器都认，写出来是为了这个函数自己读起来完整、不用跳回去看 Task 5 才知道为什么能这样写。）
 
 - [ ] **Step 5: 跑测试确认通过**
 
