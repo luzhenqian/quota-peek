@@ -1,5 +1,29 @@
 import Foundation
 import UserNotifications
+import WebKit
+
+/// Determines whether an old fixed Keychain entry should seed an account-scoped entry.
+enum KeychainMigration {
+    static func shouldMigrate(legacyValue: String?, newValue: String?) -> Bool {
+        legacyValue?.isEmpty == false && newValue?.isEmpty != false
+    }
+}
+
+/// Keeps recursive deletion constrained to the directory QuotaPeek created for this UUID.
+enum ManagedAccountDirectory {
+    static func removableURL(
+        accountID: UUID,
+        storedPath: String,
+        accountsDirectory: URL
+    ) -> URL? {
+        guard !storedPath.isEmpty else { return nil }
+        let expected = accountsDirectory
+            .appendingPathComponent(accountID.uuidString, isDirectory: true)
+            .standardizedFileURL
+        let stored = URL(fileURLWithPath: storedPath, isDirectory: true).standardizedFileURL
+        return stored == expected ? expected : nil
+    }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -22,6 +46,12 @@ final class AppModel: ObservableObject {
 
     private var refreshLoop: Task<Void, Never>?
     private var started = false
+    private static let accountsDirectory = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        .appendingPathComponent("QuotaPeek", isDirectory: true)
+        .appendingPathComponent("Accounts", isDirectory: true)
+    private static let keychainMigrationFlag = "QuotaPeek.migratedAccountKeychain.v1"
+    private var kimiWebSessions: [UUID: KimiWebSession] = [:]
 
     private init() {
         preferences = PreferencesStore.load()
@@ -80,6 +110,7 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        migrateLegacyKeychainIfNeeded()
         if preferences.notificationsEnabled {
             Task { await NotificationManager.requestAuthorization() }
         }
@@ -98,10 +129,7 @@ final class AppModel: ObservableObject {
         let pairs = ProviderFactory.make(
             accounts: currentPreferences.accounts,
             executablePaths: executablePaths,
-            secret: { [weak self] account in
-                guard let key = account.keychainKey else { return nil }
-                return self?.secretOverride(for: account) ?? SecretStore.read(account: key)
-            },
+            secret: { [weak self] account in self?.secretOverride(for: account) },
             kimiWebSession: { [weak self] account in
                 self?.kimiWebSession(for: account) ?? .shared
             }
@@ -182,44 +210,239 @@ final class AppModel: ObservableObject {
         SnapshotStore.save(snapshots)
     }
 
-    private func secretOverride(for account: ProviderAccount) -> String? { nil }
+    func addCLIAccount(provider: ProviderID, label: String) throws {
+        guard provider == .codex || provider == .claude || provider == .kimi else {
+            throw ProbeError.requestFailed("该服务商不支持 CLI 账号。")
+        }
 
-    private func kimiWebSession(for account: ProviderAccount) -> KimiWebSession {
-        if account.provider != .kimi { return .shared }
-        return .shared
+        let id = UUID()
+        let directory = Self.accountsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let credential: AccountCredential = provider == .kimi
+            ? .kimi(cliHomePath: directory.path)
+            : .cliHome(path: directory.path)
+        var updated = preferences
+        updated.accounts.append(
+            ProviderAccount(id: id, provider: provider, label: label, credential: credential, enabled: true)
+        )
+        preferences = updated
+        TerminalLauncher.run(
+            command: TerminalLauncher.loginCommand(provider: provider, homeDirectory: directory.path)
+        )
     }
 
+    func addCredentialAccount(
+        provider: ProviderID,
+        label: String,
+        baseURL: String = "https://open.bigmodel.cn"
+    ) {
+        guard provider == .glm || provider == .grok else { return }
+        let credential: AccountCredential = provider == .glm ? .apiKey(baseURL: baseURL) : .cookie
+        var updated = preferences
+        updated.accounts.append(
+            ProviderAccount(
+                id: UUID(),
+                provider: provider,
+                label: label,
+                credential: credential,
+                enabled: true
+            )
+        )
+        preferences = updated
+    }
+
+    func addKimiWebAccount(label: String) {
+        var updated = preferences
+        updated.accounts.append(
+            ProviderAccount(
+                id: UUID(),
+                provider: .kimi,
+                label: label,
+                credential: .kimi(cliHomePath: ""),
+                enabled: true
+            )
+        )
+        preferences = updated
+    }
+
+    func renameAccount(id: UUID, label: String) {
+        guard let index = preferences.accounts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = preferences
+        updated.accounts[index].label = label
+        preferences = updated
+    }
+
+    func removeAccount(id: UUID) {
+        guard let account = preferences.accounts.first(where: { $0.id == id }) else { return }
+
+        if let path = account.credential.cliHomeDirectory,
+           let directory = ManagedAccountDirectory.removableURL(
+               accountID: id,
+               storedPath: path,
+               accountsDirectory: Self.accountsDirectory
+           ) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        if let key = account.keychainKey {
+            try? SecretStore.save("", account: key)
+        }
+        if account.provider == .kimi {
+            let session = kimiWebSessions[id]
+            kimiWebSessions[id] = nil
+            let isLegacyDefault = id == ProviderAccount.legacyDefaultID(for: .kimi)
+            let flagKey = isLegacyDefault
+                ? KimiWebSession.legacyLoggedInDefaultsKey
+                : "QuotaPeek.kimiWebLoggedIn.\(id.uuidString)"
+            UserDefaults.standard.removeObject(forKey: flagKey)
+            if isLegacyDefault {
+                // The migrated account intentionally keeps using the historical default store.
+                // It has no removable identifier, so clear only Kimi records through its session.
+                let legacySession = session ?? kimiWebSession(for: account)
+                kimiWebSessions[id] = nil
+                Task {
+                    await legacySession.logout()
+                }
+            } else {
+                Task {
+                    try? await WKWebsiteDataStore.remove(forIdentifier: id)
+                }
+            }
+        }
+
+        var updated = preferences
+        updated.accounts.removeAll { $0.id == id }
+        preferences = updated
+        snapshots.removeAll { $0.accountID == id }
+        SnapshotStore.save(snapshots)
+    }
+
+    func saveSecret(_ value: String, for account: ProviderAccount) throws {
+        guard let key = account.keychainKey else { return }
+        try SecretStore.save(
+            value.trimmingCharacters(in: .whitespacesAndNewlines),
+            account: key
+        )
+    }
+
+    func hasSecret(for account: ProviderAccount) -> Bool {
+        guard let key = account.keychainKey else { return false }
+        let accountValue = SecretStore.read(account: key)
+        if account.provider == .glm {
+            return GLMCredentialResolver.resolve(explicit: accountValue)?.isEmpty == false
+        }
+        return accountValue?.isEmpty == false
+    }
+
+    private func secretOverride(for account: ProviderAccount) -> String? {
+        guard let key = account.keychainKey else { return nil }
+        return SecretStore.read(account: key)
+    }
+
+    func kimiWebSession(for account: ProviderAccount) -> KimiWebSession {
+        guard account.provider == .kimi else { return .shared }
+        if let existing = kimiWebSessions[account.id] { return existing }
+
+        let isLegacyDefault = account.id == ProviderAccount.legacyDefaultID(for: .kimi)
+        let dataStore = isLegacyDefault
+            ? WKWebsiteDataStore.default()
+            : WKWebsiteDataStore(forIdentifier: account.id)
+        let flagKey = isLegacyDefault
+            ? KimiWebSession.legacyLoggedInDefaultsKey
+            : "QuotaPeek.kimiWebLoggedIn.\(account.id.uuidString)"
+        let session = KimiWebSession(dataStore: dataStore, loginFlagKey: flagKey)
+        kimiWebSessions[account.id] = session
+        return session
+    }
+
+    func kimiWebIsLoggedIn(accountID: UUID) -> Bool {
+        guard let account = preferences.accounts.first(where: {
+            $0.id == accountID && $0.provider == .kimi
+        }) else { return false }
+        return kimiWebSession(for: account).isLoggedIn
+    }
+
+    func kimiLogin(accountID: UUID) async {
+        guard let account = preferences.accounts.first(where: {
+            $0.id == accountID && $0.provider == .kimi
+        }) else { return }
+        await kimiWebSession(for: account).presentLogin()
+        objectWillChange.send()
+        await refreshAll()
+    }
+
+    func kimiLogout(accountID: UUID) async {
+        guard let account = preferences.accounts.first(where: {
+            $0.id == accountID && $0.provider == .kimi
+        }) else { return }
+        await kimiWebSession(for: account).logout()
+        objectWillChange.send()
+        await refreshAll()
+    }
+
+    // Task 11 replaces the legacy settings sections with account rows. Keep these adapters
+    // until then so the staged implementation continues to build and the migrated default
+    // account retains its original Kimi data store/login flag.
     func saveGLMAPIKey(_ value: String) throws {
-        try SecretStore.save(value.trimmingCharacters(in: .whitespacesAndNewlines), account: "glm-api-key")
+        guard let account = legacyDefaultAccount(for: .glm) else { return }
+        try saveSecret(value, for: account)
     }
 
     func hasGLMAPIKey() -> Bool {
-        SecretStore.read(account: "glm-api-key")?.isEmpty == false
-            || GLMCredentialResolver.resolve(explicit: nil)?.isEmpty == false
-    }
-
-    func kimiWebIsLoggedIn() -> Bool {
-        KimiWebSession.shared.isLoggedIn
-    }
-
-    func kimiLogin() async {
-        await KimiWebSession.shared.presentLogin()
-        objectWillChange.send()
-        await refreshAll()
-    }
-
-    func kimiLogout() async {
-        await KimiWebSession.shared.logout()
-        objectWillChange.send()
-        await refreshAll()
+        guard let account = legacyDefaultAccount(for: .glm) else {
+            return GLMCredentialResolver.resolve(explicit: nil)?.isEmpty == false
+        }
+        return hasSecret(for: account)
     }
 
     func saveGrokCookie(_ value: String) throws {
-        try SecretStore.save(value.trimmingCharacters(in: .whitespacesAndNewlines), account: "grok-cookie")
+        guard let account = legacyDefaultAccount(for: .grok) else { return }
+        try saveSecret(value, for: account)
     }
 
     func hasGrokCookie() -> Bool {
-        SecretStore.read(account: "grok-cookie")?.isEmpty == false
+        guard let account = legacyDefaultAccount(for: .grok) else { return false }
+        return hasSecret(for: account)
+    }
+
+    func kimiWebIsLoggedIn() -> Bool {
+        guard let account = legacyDefaultAccount(for: .kimi) else {
+            return KimiWebSession.shared.isLoggedIn
+        }
+        return kimiWebSession(for: account).isLoggedIn
+    }
+
+    func kimiLogin() async {
+        guard let account = legacyDefaultAccount(for: .kimi) else { return }
+        await kimiLogin(accountID: account.id)
+    }
+
+    func kimiLogout() async {
+        guard let account = legacyDefaultAccount(for: .kimi) else { return }
+        await kimiLogout(accountID: account.id)
+    }
+
+    private func legacyDefaultAccount(for provider: ProviderID) -> ProviderAccount? {
+        let id = ProviderAccount.legacyDefaultID(for: provider)
+        return preferences.accounts.first { $0.id == id && $0.provider == provider }
+    }
+
+    private func migrateLegacyKeychainIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.keychainMigrationFlag) else { return }
+
+        for (provider, legacyKey) in [(ProviderID.glm, "glm-api-key"), (.grok, "grok-cookie")] {
+            guard let account = preferences.accounts.first(where: {
+                $0.id == ProviderAccount.legacyDefaultID(for: provider)
+            }), let newKey = account.keychainKey else {
+                continue
+            }
+            let legacyValue = SecretStore.read(account: legacyKey)
+            let newValue = SecretStore.read(account: newKey)
+            if KeychainMigration.shouldMigrate(legacyValue: legacyValue, newValue: newValue),
+               let legacyValue {
+                try? SecretStore.save(legacyValue, account: newKey)
+            }
+        }
+        UserDefaults.standard.set(true, forKey: Self.keychainMigrationFlag)
     }
 
     func toggleFloatingPanel() {
