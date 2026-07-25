@@ -281,20 +281,6 @@ final class AppModel: ObservableObject {
         preferences = updated
     }
 
-    func addKimiWebAccount(label: String) {
-        var updated = preferences
-        updated.accounts.append(
-            ProviderAccount(
-                id: UUID(),
-                provider: .kimi,
-                label: label,
-                credential: .kimi(cliHomePath: ""),
-                enabled: true
-            )
-        )
-        preferences = updated
-    }
-
     func renameAccount(id: UUID, label: String) {
         guard let index = preferences.accounts.firstIndex(where: { $0.id == id }) else { return }
         var updated = preferences

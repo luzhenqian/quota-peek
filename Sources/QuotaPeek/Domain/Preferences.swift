@@ -95,10 +95,6 @@ struct AppPreferences: Codable, Equatable, Sendable {
             ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .grok), provider: .grok, label: "默认", credential: .cookie, enabled: grokEnabled)
         ]
     }
-
-    func isEnabled(_ provider: ProviderID) -> Bool {
-        accounts.contains { $0.provider == provider && $0.enabled }
-    }
 }
 
 enum PreferencesStore {
