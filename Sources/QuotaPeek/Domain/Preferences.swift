@@ -3,16 +3,9 @@ import Foundation
 struct AppPreferences: Codable, Equatable, Sendable {
     var accounts: [ProviderAccount] = []
 
-    var codexEnabled = true
-    var claudeEnabled = true
-    var kimiEnabled = true
-    var glmEnabled = true
-    var grokEnabled = true
-
     var codexExecutable = ""
     var claudeExecutable = ""
     var kimiExecutable = ""
-    var glmBaseURL = "https://open.bigmodel.cn"
 
     var refreshIntervalMinutes = 5
     var notificationThreshold = 20
@@ -21,24 +14,41 @@ struct AppPreferences: Codable, Equatable, Sendable {
 
     init() {}
 
-    /// 容错解码：新版字段缺失就回退默认值。`codexEnabled` 等 5 个布尔 + `glmBaseURL`
-    /// 本任务原样保留（下面几行正常 decodeIfPresent），Task 12 才会删掉它们——
-    /// `SettingsView`/`ProviderFactory`/`AppModel` 到那之前都还在读，删早了编译不过。
-    /// `accounts` 缺失时说明是旧版单账号配置，用上面刚解出来的旧字段合成"默认"账号，
+    private enum CodingKeys: String, CodingKey {
+        case accounts
+        case codexExecutable
+        case claudeExecutable
+        case kimiExecutable
+        case refreshIntervalMinutes
+        case notificationThreshold
+        case notificationsEnabled
+        case floatingPanelEnabled
+
+        // 仅用于解码旧版偏好；新结构不再编码这些字段。
+        case codexEnabled
+        case claudeEnabled
+        case kimiEnabled
+        case glmEnabled
+        case grokEnabled
+        case glmBaseURL
+    }
+
+    /// 容错解码：新版字段缺失就回退默认值。
+    /// `accounts` 缺失时说明是旧版单账号配置，用局部解出的旧字段合成"默认"账号，
     /// 账号 id 固定用 `ProviderAccount.legacyDefaultID(for:)`，保证幂等、不用重新登录。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppPreferences()
 
-        codexEnabled = try c.decodeIfPresent(Bool.self, forKey: .codexEnabled) ?? d.codexEnabled
-        claudeEnabled = try c.decodeIfPresent(Bool.self, forKey: .claudeEnabled) ?? d.claudeEnabled
-        kimiEnabled = try c.decodeIfPresent(Bool.self, forKey: .kimiEnabled) ?? d.kimiEnabled
-        glmEnabled = try c.decodeIfPresent(Bool.self, forKey: .glmEnabled) ?? d.glmEnabled
-        grokEnabled = try c.decodeIfPresent(Bool.self, forKey: .grokEnabled) ?? d.grokEnabled
+        let legacyCodexEnabled = try c.decodeIfPresent(Bool.self, forKey: .codexEnabled) ?? true
+        let legacyClaudeEnabled = try c.decodeIfPresent(Bool.self, forKey: .claudeEnabled) ?? true
+        let legacyKimiEnabled = try c.decodeIfPresent(Bool.self, forKey: .kimiEnabled) ?? true
+        let legacyGLMEnabled = try c.decodeIfPresent(Bool.self, forKey: .glmEnabled) ?? true
+        let legacyGrokEnabled = try c.decodeIfPresent(Bool.self, forKey: .grokEnabled) ?? true
+        let legacyGLMBaseURL = try c.decodeIfPresent(String.self, forKey: .glmBaseURL) ?? "https://open.bigmodel.cn"
         codexExecutable = try c.decodeIfPresent(String.self, forKey: .codexExecutable) ?? d.codexExecutable
         claudeExecutable = try c.decodeIfPresent(String.self, forKey: .claudeExecutable) ?? d.claudeExecutable
         kimiExecutable = try c.decodeIfPresent(String.self, forKey: .kimiExecutable) ?? d.kimiExecutable
-        glmBaseURL = try c.decodeIfPresent(String.self, forKey: .glmBaseURL) ?? d.glmBaseURL
         refreshIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? d.refreshIntervalMinutes
         notificationThreshold = try c.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? d.notificationThreshold
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
@@ -48,10 +58,26 @@ struct AppPreferences: Codable, Equatable, Sendable {
             self.accounts = accounts
         } else {
             self.accounts = Self.migrateLegacyAccounts(
-                codexEnabled: codexEnabled, claudeEnabled: claudeEnabled, kimiEnabled: kimiEnabled,
-                glmEnabled: glmEnabled, grokEnabled: grokEnabled, glmBaseURL: glmBaseURL
+                codexEnabled: legacyCodexEnabled,
+                claudeEnabled: legacyClaudeEnabled,
+                kimiEnabled: legacyKimiEnabled,
+                glmEnabled: legacyGLMEnabled,
+                grokEnabled: legacyGrokEnabled,
+                glmBaseURL: legacyGLMBaseURL
             )
         }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(accounts, forKey: .accounts)
+        try c.encode(codexExecutable, forKey: .codexExecutable)
+        try c.encode(claudeExecutable, forKey: .claudeExecutable)
+        try c.encode(kimiExecutable, forKey: .kimiExecutable)
+        try c.encode(refreshIntervalMinutes, forKey: .refreshIntervalMinutes)
+        try c.encode(notificationThreshold, forKey: .notificationThreshold)
+        try c.encode(notificationsEnabled, forKey: .notificationsEnabled)
+        try c.encode(floatingPanelEnabled, forKey: .floatingPanelEnabled)
     }
 
     /// 迁移不看"这个字段是不是 true"——不管开没开，只要旧配置里出现过这个 provider

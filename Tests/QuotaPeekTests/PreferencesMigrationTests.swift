@@ -46,6 +46,16 @@ final class PreferencesMigrationTests: XCTestCase {
         let data = try JSONEncoder().encode(prefs)
         let decoded = try JSONDecoder().decode(AppPreferences.self, from: data)
         XCTAssertEqual(decoded.accounts, [account], "已经是新版结构时应原样解码，不重新触发迁移生成默认账号")
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let legacyKeys = [
+            "codexEnabled", "claudeEnabled", "kimiEnabled",
+            "glmEnabled", "grokEnabled", "glmBaseURL"
+        ]
+        XCTAssertTrue(
+            legacyKeys.allSatisfy { json[$0] == nil },
+            "新版结构不应继续写入只用于旧版迁移的字段"
+        )
     }
 
     func testAbsentLegacyFieldsFallBackToDefaultsAndStillMigrate() throws {
