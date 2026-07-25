@@ -5,10 +5,16 @@ struct KimiProbe: ProviderProbe {
     let source: SnapshotSource = .cli
 
     private let executablePath: String
+    private let homeDirectory: String
     private let runner = ProcessRunner()
 
-    init(executablePath: String) {
+    init(executablePath: String, homeDirectory: String = "") {
         self.executablePath = executablePath
+        self.homeDirectory = homeDirectory
+    }
+
+    static func environmentOverrides(homeDirectory: String) -> [String: String] {
+        homeDirectory.isEmpty ? [:] : ["KIMI_CODE_HOME": homeDirectory]
     }
 
     func fetch() async throws -> ProviderSnapshot {
@@ -25,7 +31,8 @@ struct KimiProbe: ProviderProbe {
             closeInput: false,
             inputDelay: 0.2,
             inputReadyText: "Send /help for help information.",
-            inputReadyTimeout: 8
+            inputReadyTimeout: 8,
+            environment: Self.environmentOverrides(homeDirectory: homeDirectory)
         )
 
         if result.timedOut && result.text.isEmpty {

@@ -5,10 +5,16 @@ struct CodexProbe: ProviderProbe {
     let source: SnapshotSource = .localRPC
 
     private let executablePath: String
+    private let homeDirectory: String
     private let runner = ProcessRunner()
 
-    init(executablePath: String) {
+    init(executablePath: String, homeDirectory: String = "") {
         self.executablePath = executablePath
+        self.homeDirectory = homeDirectory
+    }
+
+    static func environmentOverrides(homeDirectory: String) -> [String: String] {
+        homeDirectory.isEmpty ? [:] : ["CODEX_HOME": homeDirectory]
     }
 
     func fetch() async throws -> ProviderSnapshot {
@@ -27,7 +33,8 @@ struct CodexProbe: ProviderProbe {
             arguments: ["-s", "read-only", "-a", "untrusted", "app-server"],
             input: messages,
             timeout: 4,
-            closeInput: false
+            closeInput: false,
+            environment: Self.environmentOverrides(homeDirectory: homeDirectory)
         )
 
         if result.timedOut && result.text.isEmpty {

@@ -5,10 +5,18 @@ struct ClaudeProbe: ProviderProbe {
     let source: SnapshotSource = .cli
 
     private let executablePath: String
+    private let homeDirectory: String
     private let runner = ProcessRunner()
 
-    init(executablePath: String) {
+    init(executablePath: String, homeDirectory: String = "") {
         self.executablePath = executablePath
+        self.homeDirectory = homeDirectory
+    }
+
+    static func environmentOverrides(homeDirectory: String) -> [String: String] {
+        var overrides = ["ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_BASE_URL": ""]
+        if !homeDirectory.isEmpty { overrides["CLAUDE_CONFIG_DIR"] = homeDirectory }
+        return overrides
     }
 
     func fetch() async throws -> ProviderSnapshot {
@@ -29,11 +37,7 @@ struct ClaudeProbe: ProviderProbe {
             inputReadyTimeout: 5,
             skipInputIfNotReady: true,
             workingDirectory: workingDirectory,
-            environment: [
-                "ANTHROPIC_API_KEY": "",
-                "ANTHROPIC_AUTH_TOKEN": "",
-                "ANTHROPIC_BASE_URL": ""
-            ]
+            environment: Self.environmentOverrides(homeDirectory: homeDirectory)
         )
 
         if result.timedOut && result.text.isEmpty {
