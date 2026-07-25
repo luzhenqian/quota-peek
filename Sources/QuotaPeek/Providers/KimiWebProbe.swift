@@ -3,9 +3,15 @@ import Foundation
 struct KimiWebProbe: ProviderProbe {
     let provider: ProviderID = .kimi
     let source: SnapshotSource = .officialAPI
+    let session: KimiWebSession
+
+    @MainActor
+    init(session: KimiWebSession = .shared) {
+        self.session = session
+    }
 
     func fetch() async throws -> ProviderSnapshot {
-        let (stats, sub) = try await KimiWebSession.shared.fetchMembership()
+        let (stats, sub) = try await session.fetchMembership()
         return try KimiMembershipParser.parse(stats: stats, subscription: sub)
     }
 }
