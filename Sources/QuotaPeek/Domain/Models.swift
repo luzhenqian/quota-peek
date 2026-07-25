@@ -237,7 +237,7 @@ enum ProbeError: LocalizedError, Sendable {
 }
 
 struct ProviderResult: Sendable {
-    let provider: ProviderID
+    let account: ProviderAccount
     let snapshot: ProviderSnapshot?
     let errorMessage: String?
     let source: SnapshotSource

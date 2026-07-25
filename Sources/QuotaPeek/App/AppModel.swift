@@ -32,58 +32,38 @@ final class AppModel: ObservableObject {
         refreshLoop?.cancel()
     }
 
-    var enabledProviders: [ProviderID] {
-        ProviderID.allCases.filter(preferences.isEnabled)
+    var executablePaths: (codex: String, claude: String, kimi: String) {
+        (preferences.codexExecutable, preferences.claudeExecutable, preferences.kimiExecutable)
     }
 
     private var baseSnapshots: [ProviderSnapshot] {
-        enabledProviders.map { provider -> ProviderSnapshot in
-            if let snapshot = snapshots.first(where: { $0.provider == provider }) {
+        preferences.accounts.filter(\.enabled).map { account -> ProviderSnapshot in
+            if let snapshot = snapshots.first(where: { $0.accountID == account.id }) {
                 return snapshot
             }
             return .failure(
-                provider: provider,
+                accountID: account.id,
+                provider: account.provider,
+                label: account.label,
                 message: isRefreshing ? "正在查询…" : "等待首次查询",
-                source: defaultSource(for: provider)
+                source: defaultSource(for: account.provider)
             )
         }
     }
 
-    /// 各家额度到期不结转，未用完就浪费。优先推荐"头号指标"（月>周>...）里
-    /// 剩余多、又快要刷新的那家 —— 剩余多说明有空间可用，快刷新说明再不用就要被清零，两者都高的最该优先用。
-    /// 剩余量与刷新紧迫度（24 小时为半衰尺度，一天内权重接近 1，快到一周时权重降到 0.15 左右）相乘得分。
-    var recommendedProvider: ProviderID? {
-        Self.recommendedProvider(among: baseSnapshots)
+    var recommendedAccountID: UUID? {
+        Recommendation.recommendedAccountID(among: baseSnapshots)
     }
 
     var visibleSnapshots: [ProviderSnapshot] {
         let base = baseSnapshots
-        guard let recommended = recommendedProvider,
-              let index = base.firstIndex(where: { $0.provider == recommended }), index != 0 else {
+        guard let recommended = recommendedAccountID,
+              let index = base.firstIndex(where: { $0.accountID == recommended }), index != 0 else {
             return base
         }
         var reordered = base
         reordered.insert(reordered.remove(at: index), at: 0)
         return reordered
-    }
-
-    private static func recommendedProvider(among snapshots: [ProviderSnapshot]) -> ProviderID? {
-        let now = Date()
-        let scored = snapshots.compactMap { snapshot -> (ProviderID, Double)? in
-            recommendationScore(for: snapshot, now: now).map { (snapshot.provider, $0) }
-        }
-        return scored.max(by: { $0.1 < $1.1 })?.0
-    }
-
-    private static func recommendationScore(for snapshot: ProviderSnapshot, now: Date) -> Double? {
-        guard let window = snapshot.headlineWindow, window.remainingPercent > 0 else { return nil }
-        guard let resetsAt = window.resetsAt else {
-            // 不知道具体刷新时间（如 Grok 的滚动窗口），按中性紧迫度处理，既不抢跑也不被埋没。
-            return window.remainingPercent * 0.5
-        }
-        let hoursUntilReset = max(0, resetsAt.timeIntervalSince(now) / 3_600)
-        let urgency = 24 / (24 + hoursUntilReset)
-        return window.remainingPercent * urgency
     }
 
     var overallRemainingPercent: Double? {
@@ -115,24 +95,42 @@ final class AppModel: ObservableObject {
         defer { isRefreshing = false }
 
         let currentPreferences = preferences
-        let key = SecretStore.read(account: "glm-api-key")
-        let grokCookie = SecretStore.read(account: "grok-cookie")
-        let probes = ProviderFactory.make(preferences: currentPreferences, glmAPIKey: key, grokCookie: grokCookie)
+        let pairs = ProviderFactory.make(
+            accounts: currentPreferences.accounts,
+            executablePaths: executablePaths,
+            secret: { [weak self] account in
+                guard let key = account.keychainKey else { return nil }
+                return self?.secretOverride(for: account) ?? SecretStore.read(account: key)
+            },
+            kimiWebSession: { [weak self] account in
+                self?.kimiWebSession(for: account) ?? .shared
+            }
+        )
 
-        let cliProbes = probes.filter { $0.source == .cli }
-        let independentProbes = probes.filter { $0.source != .cli }
+        let cliPairs = pairs.filter { $0.probe.source == .cli }
+        let independentPairs = pairs.filter { $0.probe.source != .cli }
         let results = await withTaskGroup(of: [ProviderResult].self, returning: [ProviderResult].self) { group in
-            if !cliProbes.isEmpty {
+            struct HomeDirectoryGroupKey: Hashable {
+                let provider: ProviderID
+                let homeDirectory: String
+            }
+            let cliGroups = Dictionary(grouping: cliPairs) { pair in
+                HomeDirectoryGroupKey(
+                    provider: pair.account.provider,
+                    homeDirectory: pair.account.credential.cliHomeDirectory ?? ""
+                )
+            }
+            for (_, groupPairs) in cliGroups {
                 group.addTask {
                     var batch: [ProviderResult] = []
-                    for probe in cliProbes {
-                        batch.append(await Self.fetchCLIResult(from: probe))
+                    for pair in groupPairs {
+                        batch.append(await Self.fetchCLIResult(from: pair.probe, account: pair.account))
                     }
                     return batch
                 }
             }
-            for probe in independentProbes {
-                group.addTask { [await Self.fetchResult(from: probe)] }
+            for pair in independentPairs {
+                group.addTask { [await Self.fetchResult(from: pair.probe, account: pair.account)] }
             }
 
             var collected: [ProviderResult] = []
@@ -140,9 +138,15 @@ final class AppModel: ObservableObject {
             return collected
         }
 
-        var updated = snapshots.filter { !currentPreferences.isEnabled($0.provider) }
+        let accountsByID = Dictionary(uniqueKeysWithValues: currentPreferences.accounts.map { ($0.id, $0) })
+        var updated = snapshots.filter { snapshot in
+            guard let account = accountsByID[snapshot.accountID] else { return false }
+            return !account.enabled
+        }
         for result in results {
-            if let snapshot = result.snapshot {
+            if var snapshot = result.snapshot {
+                snapshot.accountID = result.account.id
+                snapshot.account = result.account.label
                 updated.append(snapshot)
                 if preferences.notificationsEnabled {
                     NotificationManager.notifyIfNeeded(
@@ -151,21 +155,33 @@ final class AppModel: ObservableObject {
                     )
                 }
             } else {
-                let previous = snapshots.first(where: { $0.provider == result.provider })
-                updated.append(.failure(
-                    provider: result.provider,
+                let previous = snapshots.first(where: { $0.accountID == result.account.id })
+                var failure = ProviderSnapshot.failure(
+                    accountID: result.account.id,
+                    provider: result.account.provider,
+                    label: result.account.label,
                     message: result.errorMessage ?? "未知错误",
                     source: result.source,
                     previous: previous
-                ))
+                )
+                // `failure(previous:)` 保留上一份数据；账号身份仍必须以本轮的账号配置为准。
+                failure.accountID = result.account.id
+                failure.provider = result.account.provider
+                failure.account = result.account.label
+                updated.append(failure)
             }
         }
 
-        snapshots = updated.sorted { lhs, rhs in
-            ProviderID.allCases.firstIndex(of: lhs.provider)! < ProviderID.allCases.firstIndex(of: rhs.provider)!
-        }
+        snapshots = updated
         lastRefreshAt = Date()
         SnapshotStore.save(snapshots)
+    }
+
+    private func secretOverride(for account: ProviderAccount) -> String? { nil }
+
+    private func kimiWebSession(for account: ProviderAccount) -> KimiWebSession {
+        if account.provider != .kimi { return .shared }
+        return .shared
     }
 
     func saveGLMAPIKey(_ value: String) throws {
@@ -236,17 +252,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    nonisolated private static func fetchResult(from probe: any ProviderProbe) async -> ProviderResult {
+    nonisolated private static func fetchResult(
+        from probe: any ProviderProbe,
+        account: ProviderAccount
+    ) async -> ProviderResult {
         do {
             return ProviderResult(
-                provider: probe.provider,
+                account: account,
                 snapshot: try await probe.fetch(),
                 errorMessage: nil,
                 source: probe.source
             )
         } catch {
             return ProviderResult(
-                provider: probe.provider,
+                account: account,
                 snapshot: nil,
                 errorMessage: error.localizedDescription,
                 source: probe.source
@@ -254,11 +273,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    nonisolated private static func fetchCLIResult(from probe: any ProviderProbe) async -> ProviderResult {
-        let first = await fetchResult(from: probe)
+    nonisolated private static func fetchCLIResult(
+        from probe: any ProviderProbe,
+        account: ProviderAccount
+    ) async -> ProviderResult {
+        let first = await fetchResult(from: probe, account: account)
         guard first.snapshot == nil else { return first }
         try? await Task.sleep(for: .seconds(1))
-        return await fetchResult(from: probe)
+        return await fetchResult(from: probe, account: account)
     }
 }
 
@@ -272,7 +294,7 @@ enum NotificationManager {
         guard let remaining = snapshot.minimumRemainingPercent, remaining <= threshold else { return }
         let band = remaining <= 5 ? "critical" : "warning"
         let resetKey = snapshot.windows.compactMap(\.resetsAt).map { String(Int($0.timeIntervalSince1970)) }.joined()
-        let key = "QuotaPeek.notice.\(snapshot.provider.rawValue).\(band).\(resetKey)"
+        let key = "QuotaPeek.notice.\(snapshot.accountID.uuidString).\(band).\(resetKey)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
 
         let content = UNMutableNotificationContent()

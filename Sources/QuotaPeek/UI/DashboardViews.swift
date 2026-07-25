@@ -158,9 +158,14 @@ private struct ProviderCards: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        let accountCounts = Dictionary(grouping: model.visibleSnapshots, by: \.provider).mapValues(\.count)
         LazyVStack(spacing: 7) {
             ForEach(model.visibleSnapshots) { snapshot in
-                ProviderCard(snapshot: snapshot, isRecommended: snapshot.provider == model.recommendedProvider)
+                ProviderCard(
+                    snapshot: snapshot,
+                    isRecommended: snapshot.accountID == model.recommendedAccountID,
+                    showsAccountLabel: (accountCounts[snapshot.provider] ?? 0) > 1
+                )
             }
         }
     }
@@ -242,6 +247,7 @@ private struct PlanBadge: View {
 private struct ProviderCard: View {
     let snapshot: ProviderSnapshot
     let isRecommended: Bool
+    let showsAccountLabel: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -269,6 +275,11 @@ private struct ProviderCard: View {
                 Text(snapshot.provider.displayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
+                if showsAccountLabel, let label = snapshot.account, !label.isEmpty {
+                    Text("· \(label)")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
                 if let plan = snapshot.plan {
                     PlanBadge(plan: plan, provider: snapshot.provider)
                 }
