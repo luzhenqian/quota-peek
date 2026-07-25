@@ -2,6 +2,8 @@ import XCTest
 @testable import QuotaPeek
 
 final class AccountKeychainMigrationTests: XCTestCase {
+    private final class ReferenceToken {}
+
     func testMigratesWhenLegacyHasValueAndNewDoesNot() {
         XCTAssertTrue(KeychainMigration.shouldMigrate(legacyValue: "sk-old", newValue: nil))
         XCTAssertTrue(KeychainMigration.shouldMigrate(legacyValue: "sk-old", newValue: ""))
@@ -96,5 +98,20 @@ final class AccountKeychainMigrationTests: XCTestCase {
                 accountsDirectory: accounts
             )
         )
+    }
+
+    func testClearableReferenceHolderDropsOwnershipWhenTaken() {
+        var token: ReferenceToken? = ReferenceToken()
+        weak let weakToken = token
+        let holder = ClearableReferenceHolder(token)
+        token = nil
+
+        XCTAssertNotNil(weakToken)
+        var taken = holder.take()
+        XCTAssertNotNil(taken)
+        XCTAssertNil(holder.take())
+
+        taken = nil
+        XCTAssertNil(weakToken)
     }
 }

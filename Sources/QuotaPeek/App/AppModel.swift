@@ -36,6 +36,21 @@ enum ManagedAccountDirectory {
     }
 }
 
+/// Transfers an object into asynchronous cleanup without leaving an immutable captured
+/// parameter that keeps the object alive after the cleanup has explicitly released it.
+final class ClearableReferenceHolder<Reference: AnyObject> {
+    private var reference: Reference?
+
+    init(_ reference: Reference?) {
+        self.reference = reference
+    }
+
+    func take() -> Reference? {
+        defer { reference = nil }
+        return reference
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
@@ -302,8 +317,6 @@ final class AppModel: ObservableObject {
             try? SecretStore.save("", account: key)
         }
         if account.provider == .kimi {
-            let session = kimiWebSessions[id]
-            kimiWebSessions[id] = nil
             let isLegacyDefault = id == ProviderAccount.legacyDefaultID(for: .kimi)
             let flagKey = isLegacyDefault
                 ? KimiWebSession.legacyLoggedInDefaultsKey
@@ -312,17 +325,21 @@ final class AppModel: ObservableObject {
             if isLegacyDefault {
                 // The migrated account intentionally keeps using the historical default store.
                 // It has no removable identifier, so clear only Kimi records through its session.
-                let legacySession = session ?? kimiWebSession(for: account)
+                let legacySession = kimiWebSessions.removeValue(forKey: id)
+                    ?? kimiWebSession(for: account)
                 kimiWebSessions[id] = nil
                 Task {
                     await legacySession.logout()
                 }
             } else {
+                let sessionHolder = ClearableReferenceHolder(
+                    kimiWebSessions.removeValue(forKey: id)
+                )
                 Task {
                     await Self.removeKimiDataStore(
                         identifier: id,
                         loginFlagKey: flagKey,
-                        cachedSession: session
+                        sessionHolder: sessionHolder
                     )
                 }
             }
@@ -338,12 +355,12 @@ final class AppModel: ObservableObject {
     private static func removeKimiDataStore(
         identifier: UUID,
         loginFlagKey: String,
-        cachedSession: KimiWebSession?
+        sessionHolder: ClearableReferenceHolder<KimiWebSession>
     ) async {
         // Clear Kimi records first, then release AppModel's last known session/store owner.
         // An in-flight refresh may still retain the probe temporarily, so identifier removal
         // uses bounded backoff instead of permanently leaking the store after one busy error.
-        var session: KimiWebSession? = cachedSession ?? KimiWebSession(
+        var session: KimiWebSession? = sessionHolder.take() ?? KimiWebSession(
             dataStore: WKWebsiteDataStore(forIdentifier: identifier),
             loginFlagKey: loginFlagKey
         )
