@@ -452,7 +452,7 @@ final class PreferencesMigrationTests: XCTestCase {
         """
         let prefs = try JSONDecoder().decode(AppPreferences.self, from: Data(legacyJSON.utf8))
 
-        XCTAssertEqual(prefs.accounts.count, 3, "只有 3 个 provider 曾经启用过（codex/claude/glm）")
+        XCTAssertEqual(prefs.accounts.count, 5, "5 个 provider 在旧配置里都出现过（哪怕是关着的），迁移要保留这个开关状态，不能凭空丢账号")
 
         let codex = try XCTUnwrap(prefs.accounts.first { $0.provider == .codex })
         XCTAssertEqual(codex.id, ProviderAccount.legacyDefaultID(for: .codex))
@@ -463,8 +463,12 @@ final class PreferencesMigrationTests: XCTestCase {
         let glm = try XCTUnwrap(prefs.accounts.first { $0.provider == .glm })
         XCTAssertEqual(glm.credential, .apiKey(baseURL: "https://api.z.ai"))
 
-        XCTAssertNil(prefs.accounts.first { $0.provider == .kimi }, "kimiEnabled 是 false，不应该生成账号")
-        XCTAssertNil(prefs.accounts.first { $0.provider == .grok })
+        let kimi = try XCTUnwrap(prefs.accounts.first { $0.provider == .kimi })
+        XCTAssertFalse(kimi.enabled, "kimiEnabled 是 false，迁移后账号要保留禁用状态——用户以后在设置里翻一下开关就能用，不用重新登录")
+
+        let grok = try XCTUnwrap(prefs.accounts.first { $0.provider == .grok })
+        XCTAssertFalse(grok.enabled)
+
         XCTAssertEqual(prefs.codexExecutable, "/opt/homebrew/bin/codex", "可执行文件路径这类全局字段照常解码，不参与迁移")
     }
 
@@ -480,9 +484,13 @@ final class PreferencesMigrationTests: XCTestCase {
         XCTAssertEqual(decoded.accounts, [account], "已经是新版结构时应原样解码，不重新触发迁移生成默认账号")
     }
 
-    func testCompletelyEmptyLegacyJSONProducesNoAccounts() throws {
+    func testAbsentLegacyFieldsFallBackToDefaultsAndStillMigrate() throws {
+        // init(from:) 只有在真的存在已保存数据时才会被调用——全新安装走
+        // PreferencesStore.load() 的 guard 分支，根本不会触发解码。这里测的是
+        // "字段确实缺失时怎么办"，不是"全新安装"（那个场景不会调用这个 initializer）。
         let prefs = try JSONDecoder().decode(AppPreferences.self, from: Data("{}".utf8))
-        XCTAssertTrue(prefs.accounts.isEmpty, "全新安装、没有任何历史配置时不应该凭空生成账号")
+        XCTAssertEqual(prefs.accounts.count, 5, "所有布尔字段都缺失时回退默认值 true，5 个 provider 都生成默认启用的账号")
+        XCTAssertTrue(prefs.accounts.allSatisfy(\.enabled))
     }
 }
 ```
@@ -500,9 +508,16 @@ import Foundation
 struct AppPreferences: Codable, Equatable, Sendable {
     var accounts: [ProviderAccount] = []
 
+    var codexEnabled = true
+    var claudeEnabled = true
+    var kimiEnabled = true
+    var glmEnabled = true
+    var grokEnabled = true
+
     var codexExecutable = ""
     var claudeExecutable = ""
     var kimiExecutable = ""
+    var glmBaseURL = "https://open.bigmodel.cn"
 
     var refreshIntervalMinutes = 5
     var notificationThreshold = 20
@@ -511,56 +526,53 @@ struct AppPreferences: Codable, Equatable, Sendable {
 
     init() {}
 
-    /// 容错解码：新版字段缺失就回退默认值。`accounts` 缺失时说明是旧版单账号配置，
-    /// 用 `LegacyCodingKeys` 解出旧的 5 组 enabled + glmBaseURL，各自合成一条"默认"账号，
+    /// 容错解码：新版字段缺失就回退默认值。`codexEnabled` 等 5 个布尔 + `glmBaseURL`
+    /// 本任务原样保留（下面几行正常 decodeIfPresent），Task 12 才会删掉它们——
+    /// `SettingsView`/`ProviderFactory`/`AppModel` 到那之前都还在读，删早了编译不过。
+    /// `accounts` 缺失时说明是旧版单账号配置，用上面刚解出来的旧字段合成"默认"账号，
     /// 账号 id 固定用 `ProviderAccount.legacyDefaultID(for:)`，保证幂等、不用重新登录。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppPreferences()
 
-        if let accounts = try c.decodeIfPresent([ProviderAccount].self, forKey: .accounts) {
-            self.accounts = accounts
-        } else {
-            self.accounts = try Self.migrateLegacyAccounts(from: decoder)
-        }
-
+        codexEnabled = try c.decodeIfPresent(Bool.self, forKey: .codexEnabled) ?? d.codexEnabled
+        claudeEnabled = try c.decodeIfPresent(Bool.self, forKey: .claudeEnabled) ?? d.claudeEnabled
+        kimiEnabled = try c.decodeIfPresent(Bool.self, forKey: .kimiEnabled) ?? d.kimiEnabled
+        glmEnabled = try c.decodeIfPresent(Bool.self, forKey: .glmEnabled) ?? d.glmEnabled
+        grokEnabled = try c.decodeIfPresent(Bool.self, forKey: .grokEnabled) ?? d.grokEnabled
         codexExecutable = try c.decodeIfPresent(String.self, forKey: .codexExecutable) ?? d.codexExecutable
         claudeExecutable = try c.decodeIfPresent(String.self, forKey: .claudeExecutable) ?? d.claudeExecutable
         kimiExecutable = try c.decodeIfPresent(String.self, forKey: .kimiExecutable) ?? d.kimiExecutable
+        glmBaseURL = try c.decodeIfPresent(String.self, forKey: .glmBaseURL) ?? d.glmBaseURL
         refreshIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? d.refreshIntervalMinutes
         notificationThreshold = try c.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? d.notificationThreshold
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         floatingPanelEnabled = try c.decodeIfPresent(Bool.self, forKey: .floatingPanelEnabled) ?? d.floatingPanelEnabled
-    }
 
-    private enum LegacyCodingKeys: String, CodingKey {
-        case codexEnabled, claudeEnabled, kimiEnabled, glmEnabled, grokEnabled, glmBaseURL
-    }
-
-    private static func migrateLegacyAccounts(from decoder: Decoder) throws -> [ProviderAccount] {
-        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
-        let glmBaseURL = try legacy.decodeIfPresent(String.self, forKey: .glmBaseURL) ?? "https://open.bigmodel.cn"
-
-        let definitions: [(provider: ProviderID, key: LegacyCodingKeys, credential: AccountCredential)] = [
-            (.codex, .codexEnabled, .cliHome(path: "")),
-            (.claude, .claudeEnabled, .cliHome(path: "")),
-            (.kimi, .kimiEnabled, .kimi(cliHomePath: "")),
-            (.glm, .glmEnabled, .apiKey(baseURL: glmBaseURL)),
-            (.grok, .grokEnabled, .cookie)
-        ]
-
-        return try definitions.compactMap { definition in
-            guard let wasEnabled = try legacy.decodeIfPresent(Bool.self, forKey: definition.key) else {
-                return nil // 这个字段在旧配置里完全不存在（全新安装），不生成账号
-            }
-            return ProviderAccount(
-                id: ProviderAccount.legacyDefaultID(for: definition.provider),
-                provider: definition.provider,
-                label: "默认",
-                credential: definition.credential,
-                enabled: wasEnabled
+        if let accounts = try c.decodeIfPresent([ProviderAccount].self, forKey: .accounts) {
+            self.accounts = accounts
+        } else {
+            self.accounts = Self.migrateLegacyAccounts(
+                codexEnabled: codexEnabled, claudeEnabled: claudeEnabled, kimiEnabled: kimiEnabled,
+                glmEnabled: glmEnabled, grokEnabled: grokEnabled, glmBaseURL: glmBaseURL
             )
         }
+    }
+
+    /// 迁移不看"这个字段是不是 true"——不管开没开，只要旧配置里出现过这个 provider
+    /// 就生成一条账号，`enabled` 照抄旧开关状态。这样被关掉的 provider 迁移后还是
+    /// 一条禁用账号，用户在新设置页翻一下开关就能用，不需要重新走登录流程。
+    private static func migrateLegacyAccounts(
+        codexEnabled: Bool, claudeEnabled: Bool, kimiEnabled: Bool,
+        glmEnabled: Bool, grokEnabled: Bool, glmBaseURL: String
+    ) -> [ProviderAccount] {
+        [
+            ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .codex), provider: .codex, label: "默认", credential: .cliHome(path: ""), enabled: codexEnabled),
+            ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .claude), provider: .claude, label: "默认", credential: .cliHome(path: ""), enabled: claudeEnabled),
+            ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .kimi), provider: .kimi, label: "默认", credential: .kimi(cliHomePath: ""), enabled: kimiEnabled),
+            ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .glm), provider: .glm, label: "默认", credential: .apiKey(baseURL: glmBaseURL), enabled: glmEnabled),
+            ProviderAccount(id: ProviderAccount.legacyDefaultID(for: .grok), provider: .grok, label: "默认", credential: .cookie, enabled: grokEnabled)
+        ]
     }
 
     func isEnabled(_ provider: ProviderID) -> Bool {
@@ -586,7 +598,7 @@ enum PreferencesStore {
 }
 ```
 
-注意：`isEnabled(_:)` 保留下来（`SettingsView`/`AppModel` 目前还在用），语义从"这个 Provider 的全局开关是否打开"变成"这个 Provider 名下是否至少有一个启用的账号"——过渡期间行为等价（旧配置迁移后每个 Provider 最多一个账号）。
+注意：`codexEnabled` 等 5 个布尔字段现在**同时**驱动 `isEnabled(_:)` 的旧读法（`SettingsView`/`AppModel`/`ProviderFactory` 眼下还在读）——但 `isEnabled(_:)` 本身已经改成看 `accounts`，所以从这个任务起，真正决定探针是否运行的是 `accounts` 数组，那 5 个布尔字段只是"迁移时的历史输入 + 暂时还没改造完的旧 UI 绑定"，纯粹的展示层残留，不再是事实来源。Task 9 会把 `AppModel`/`ProviderFactory` 切到 `accounts`，Task 11 会把 `SettingsView` 换成账号列表 UI 不再绑定这些旧字段，Task 12 才真正删掉它们。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -596,7 +608,7 @@ Expected: 3 个测试 PASS。
 - [ ] **Step 5: 全量跑一遍确认没有破坏别的地方**
 
 Run: `swift build && swift test`
-Expected: 编译通过，全部测试 PASS（`SettingsView`/`AppModel`/`ProviderFactory` 目前读的是 `codexEnabled` 等旧字段，本任务原样保留，不受影响）。
+Expected: 编译通过，全部测试 PASS（`SettingsView`/`AppModel`/`ProviderFactory` 目前读的是 `codexEnabled` 等旧字段，本任务原样保留没有删除或改名，不受影响）。
 
 - [ ] **Step 6: Commit**
 
