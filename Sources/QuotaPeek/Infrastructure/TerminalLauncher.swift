@@ -5,12 +5,17 @@ import Foundation
 /// 而是拉起系统 Terminal.app 让用户像平时一样登录，交互交给 CLI 自己处理。
 enum TerminalLauncher {
     static func loginCommand(provider: ProviderID, homeDirectory: String) -> String {
-        switch provider {
-        case .claude: #"CLAUDE_CONFIG_DIR="\#(homeDirectory)" claude"#
-        case .codex:  #"CODEX_HOME="\#(homeDirectory)" codex login"#
-        case .kimi:   #"KIMI_CODE_HOME="\#(homeDirectory)" kimi login"#
+        let quotedHomeDirectory = shellQuote(homeDirectory)
+        return switch provider {
+        case .claude: "CLAUDE_CONFIG_DIR=\(quotedHomeDirectory) claude"
+        case .codex:  "CODEX_HOME=\(quotedHomeDirectory) codex login"
+        case .kimi:   "KIMI_CODE_HOME=\(quotedHomeDirectory) kimi login"
         case .glm, .grok: ""  // 非 CLI 类型，调用方不应该传进来
         }
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
     static func appleScript(for command: String) -> String {

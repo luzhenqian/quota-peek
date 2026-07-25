@@ -16,15 +16,24 @@ final class TerminalLauncherTests: XCTestCase {
     func testLoginCommandPerProvider() {
         XCTAssertEqual(
             TerminalLauncher.loginCommand(provider: .claude, homeDirectory: "/tmp/a"),
-            #"CLAUDE_CONFIG_DIR="/tmp/a" claude"#
+            "CLAUDE_CONFIG_DIR='/tmp/a' claude"
         )
         XCTAssertEqual(
             TerminalLauncher.loginCommand(provider: .codex, homeDirectory: "/tmp/b"),
-            #"CODEX_HOME="/tmp/b" codex login"#
+            "CODEX_HOME='/tmp/b' codex login"
         )
         XCTAssertEqual(
             TerminalLauncher.loginCommand(provider: .kimi, homeDirectory: "/tmp/c"),
-            #"KIMI_CODE_HOME="/tmp/c" kimi login"#
+            "KIMI_CODE_HOME='/tmp/c' kimi login"
+        )
+    }
+
+    func testLoginCommandShellQuotesDangerousHomeDirectoryCharacters() {
+        let homeDirectory = #"/tmp/account name/"quoted"/it's/$(touch /tmp/pwned)/`whoami`"#
+
+        XCTAssertEqual(
+            TerminalLauncher.loginCommand(provider: .codex, homeDirectory: homeDirectory),
+            #"CODEX_HOME='/tmp/account name/"quoted"/it'"'"'s/$(touch /tmp/pwned)/`whoami`' codex login"#
         )
     }
 }
