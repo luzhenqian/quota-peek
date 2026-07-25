@@ -135,6 +135,7 @@ final class KimiWebSession: NSObject {
         return Data(body.utf8)
     }
 
+    /// 弹窗让用户用平时的方式登录；检测到 access_token 即判定成功、关窗。
     func presentLogin() async {
         let loginWV = WKWebView(frame: NSRect(x: 0, y: 0, width: 460, height: 680),
                                 configuration: {
@@ -147,6 +148,8 @@ final class KimiWebSession: NSObject {
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 680),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "登录 Kimi"
+        // 局部变量 window 持有窗口直到函数返回；若窗口在 close() 时自行释放，
+        // 该强引用会指向已释放内存，导致自动释放池 drain 时过度释放崩溃。
         window.isReleasedWhenClosed = false
         window.contentView = loginWV
         window.center()
@@ -156,12 +159,16 @@ final class KimiWebSession: NSObject {
 
         loginWV.load(URLRequest(url: URL(string: "https://www.kimi.com/")!))
 
+        // 轮询 access_token；最多 5 分钟
         for _ in 0..<300 {
             try? await Task.sleep(for: .seconds(1))
             if window.isVisible == false { break }
             if let tok = (try? await loginWV.evaluateJavaScript(
                 "localStorage.getItem('access_token')")) as? String, !tok.isEmpty {
                 isLoggedIn = true
+                // 登录 WebView 写入 localStorage 到持久 data store、再到常驻 WebView
+                // 可见有微小时序窗口；重载常驻 WebView 并确认能读到 token 后再返回，
+                // 避免登录后首次 fetch 因 token 尚未同步而 401。
                 for _ in 0..<3 {
                     await load(membershipHome, in: webView)
                     if await readAccessToken(in: webView)?.isEmpty == false { break }
