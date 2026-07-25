@@ -236,16 +236,16 @@ private struct CredentialEditor: View {
         if !account.enabled {
             return CredentialStatus(message: "已停用", color: .secondary)
         }
-        if let snapshotError {
-            return CredentialStatus(message: snapshotError, color: .orange)
-        }
         if let saveStatus, saveStatus.isError {
             return CredentialStatus(message: saveStatus.message, color: .red)
         }
-        if model.hasSecret(for: account) {
-            return CredentialStatus(message: "已保存凭证", color: .green)
+        guard model.hasSecret(for: account) else {
+            return CredentialStatus(message: "尚未配置凭证", color: .secondary)
         }
-        return CredentialStatus(message: "尚未配置凭证", color: .secondary)
+        if let snapshotError {
+            return CredentialStatus(message: snapshotError, color: .orange)
+        }
+        return CredentialStatus(message: "已保存凭证", color: .green)
     }
 
     private func save() {
