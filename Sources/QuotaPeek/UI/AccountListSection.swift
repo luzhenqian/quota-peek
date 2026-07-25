@@ -66,6 +66,7 @@ private struct AccountRow: View {
 
                 Toggle("", isOn: enabledBinding)
                     .labelsHidden()
+                    .accessibilityLabel("启用账号 \(account.label)")
 
                 Button(role: .destructive) {
                     showingDeleteConfirmation = true
@@ -73,6 +74,7 @@ private struct AccountRow: View {
                     Image(systemName: "trash")
                 }
                 .help("删除账号")
+                .accessibilityLabel("删除账号 \(account.label)")
             }
 
             CredentialEditor(model: model, account: account)
@@ -145,7 +147,7 @@ private struct CredentialEditor: View {
             HStack {
                 Text(kimiStatusText)
                     .font(.caption)
-                    .foregroundStyle(kimiIsLoggedIn ? .green : .secondary)
+                    .foregroundStyle(runtimeStatusColor)
                 Spacer()
                 if kimiIsLoggedIn {
                     Button("退出网页登录") {
@@ -184,22 +186,32 @@ private struct CredentialEditor: View {
     }
 
     private var kimiStatusText: String {
-        kimiIsLoggedIn ? "已登录（网页接口）" : cliStatusText
+        let mode = kimiIsLoggedIn ? "网页登录" : "使用官方 CLI"
+        guard account.enabled else { return "已停用 · \(mode)" }
+        return "\(mode) · \(runtimeStatusText)"
     }
 
     private var cliStatusText: String {
-        guard account.enabled else { return "已停用" }
-        return model.visibleSnapshots
-            .first(where: { $0.accountID == account.id })?
-            .errorMessage ?? "正常"
+        account.enabled ? runtimeStatusText : "已停用"
     }
 
     private var cliStatusColor: Color {
+        runtimeStatusColor
+    }
+
+    private var runtimeStatusText: String {
+        snapshotError ?? "正常"
+    }
+
+    private var runtimeStatusColor: Color {
         guard account.enabled else { return .secondary }
-        let hasError = model.visibleSnapshots
+        return snapshotError == nil ? .green : .orange
+    }
+
+    private var snapshotError: String? {
+        model.visibleSnapshots
             .first(where: { $0.accountID == account.id })?
-            .errorMessage != nil
-        return hasError ? .orange : .green
+            .errorMessage
     }
 
     private func secretEditor(placeholder: String) -> some View {
@@ -214,17 +226,26 @@ private struct CredentialEditor: View {
     }
 
     private var credentialStatus: some View {
-        let hasSecret = model.hasSecret(for: account)
-        return Text(
-            saveStatus?.message
-                ?? (hasSecret ? "已保存凭证" : "尚未配置凭证")
-        )
-        .font(.caption)
-        .foregroundStyle(
-            saveStatus?.isError == true
-                ? Color.red
-                : (hasSecret ? Color.green : Color.secondary)
-        )
+        let status = credentialStatusValue
+        return Text(status.message)
+            .font(.caption)
+            .foregroundStyle(status.color)
+    }
+
+    private var credentialStatusValue: CredentialStatus {
+        if !account.enabled {
+            return CredentialStatus(message: "已停用", color: .secondary)
+        }
+        if let snapshotError {
+            return CredentialStatus(message: snapshotError, color: .orange)
+        }
+        if let saveStatus, saveStatus.isError {
+            return CredentialStatus(message: saveStatus.message, color: .red)
+        }
+        if model.hasSecret(for: account) {
+            return CredentialStatus(message: "已保存凭证", color: .green)
+        }
+        return CredentialStatus(message: "尚未配置凭证", color: .secondary)
     }
 
     private func save() {
@@ -366,4 +387,9 @@ private struct AddAccountSheet: View {
 private struct SaveStatus {
     let message: String
     let isError: Bool
+}
+
+private struct CredentialStatus {
+    let message: String
+    let color: Color
 }
