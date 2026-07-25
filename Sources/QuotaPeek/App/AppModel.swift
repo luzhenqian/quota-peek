@@ -461,53 +461,6 @@ final class AppModel: ObservableObject {
         await refreshAll()
     }
 
-    // Task 11 replaces the legacy settings sections with account rows. Keep these adapters
-    // until then so the staged implementation continues to build and the migrated default
-    // account retains its original Kimi data store/login flag.
-    func saveGLMAPIKey(_ value: String) throws {
-        guard let account = legacyDefaultAccount(for: .glm) else { return }
-        try saveSecret(value, for: account)
-    }
-
-    func hasGLMAPIKey() -> Bool {
-        guard let account = legacyDefaultAccount(for: .glm) else {
-            return GLMCredentialResolver.resolve(explicit: nil)?.isEmpty == false
-        }
-        return hasSecret(for: account)
-    }
-
-    func saveGrokCookie(_ value: String) throws {
-        guard let account = legacyDefaultAccount(for: .grok) else { return }
-        try saveSecret(value, for: account)
-    }
-
-    func hasGrokCookie() -> Bool {
-        guard let account = legacyDefaultAccount(for: .grok) else { return false }
-        return hasSecret(for: account)
-    }
-
-    func kimiWebIsLoggedIn() -> Bool {
-        guard let account = legacyDefaultAccount(for: .kimi) else {
-            return KimiWebSession.shared.isLoggedIn
-        }
-        return kimiWebSession(for: account).isLoggedIn
-    }
-
-    func kimiLogin() async {
-        guard let account = legacyDefaultAccount(for: .kimi) else { return }
-        await kimiLogin(accountID: account.id)
-    }
-
-    func kimiLogout() async {
-        guard let account = legacyDefaultAccount(for: .kimi) else { return }
-        await kimiLogout(accountID: account.id)
-    }
-
-    private func legacyDefaultAccount(for provider: ProviderID) -> ProviderAccount? {
-        let id = ProviderAccount.legacyDefaultID(for: provider)
-        return preferences.accounts.first { $0.id == id && $0.provider == provider }
-    }
-
     private func migrateLegacyKeychainIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: Self.keychainMigrationFlag) else { return }
 
