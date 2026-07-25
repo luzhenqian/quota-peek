@@ -178,7 +178,7 @@ final class AppModel: ObservableObject {
     }
 
     func kimiWebIsLoggedIn() -> Bool {
-        KimiWebSession.isLoggedIn
+        KimiWebSession.shared.isLoggedIn
     }
 
     func kimiLogin() async {

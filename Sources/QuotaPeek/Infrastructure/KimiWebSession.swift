@@ -3,24 +3,26 @@ import WebKit
 
 @MainActor
 final class KimiWebSession: NSObject {
-    static let shared = KimiWebSession()
+    /// 迁移期兼容：多账号改造完成前，唯一的 Kimi 网页会话，绑定系统默认 data store。
+    /// Task 10 起 AppModel 会按账号构造独立实例，不再依赖这个单例；保留它只是为了
+    /// 让 Task 5～9 之间还没迁移完的旧调用点继续编译通过。
+    static let shared = KimiWebSession(dataStore: .default(), loginFlagKey: legacyLoggedInDefaultsKey)
 
-    nonisolated private static let loggedInDefaultsKey = "QuotaPeek.kimiWebLoggedIn"
+    nonisolated static let legacyLoggedInDefaultsKey = "QuotaPeek.kimiWebLoggedIn"
     private let membershipHome = URL(string: "https://www.kimi.com/membership/subscription")!
+    private let dataStore: WKWebsiteDataStore
+    private let loginFlagKey: String
 
-    /// 登录状态的唯一真相源：登录/登出时由本会话写入 UserDefaults，
-    /// ProviderFactory 与 AppModel 都通过此属性读取，避免各处硬编码 key。
-    /// 只读写 UserDefaults（线程安全），故 nonisolated，可从任意上下文访问。
-    nonisolated static var isLoggedIn: Bool {
-        get { UserDefaults.standard.bool(forKey: loggedInDefaultsKey) }
-        set { UserDefaults.standard.set(newValue, forKey: loggedInDefaultsKey) }
+    var isLoggedIn: Bool {
+        get { UserDefaults.standard.bool(forKey: loginFlagKey) }
+        set { UserDefaults.standard.set(newValue, forKey: loginFlagKey) }
     }
 
     // 常驻 WebView：持久 data store，让 cookie + localStorage 落地磁盘，
     // token 刷新交给 Kimi 网页 JS。
     private lazy var webView: WKWebView = {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()   // 持久化
+        config.websiteDataStore = dataStore
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.customUserAgent =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
@@ -28,7 +30,11 @@ final class KimiWebSession: NSObject {
         return wv
     }()
 
-    private override init() { super.init() }
+    init(dataStore: WKWebsiteDataStore, loginFlagKey: String) {
+        self.dataStore = dataStore
+        self.loginFlagKey = loginFlagKey
+        super.init()
+    }
 
     /// 确保常驻 WebView 已停在 www.kimi.com（同源，才能带 token 直连接口）。
     private func ensureLoaded() async {
@@ -84,7 +90,7 @@ final class KimiWebSession: NSObject {
                 return try await callBoth()
             } catch ProbeError.authenticationRequired {
                 // 仍是 401 → session 真过期，标记未登录并抛出
-                Self.isLoggedIn = false
+                isLoggedIn = false
                 throw ProbeError.authenticationRequired("请在设置中重新登录 Kimi 网页账号。")
             }
             // 其它错误（网络/500）直接向上抛出，不翻登录标志 ——
@@ -129,12 +135,11 @@ final class KimiWebSession: NSObject {
         return Data(body.utf8)
     }
 
-    /// 弹窗让用户用平时的方式登录；检测到 access_token 即判定成功、关窗。
     func presentLogin() async {
         let loginWV = WKWebView(frame: NSRect(x: 0, y: 0, width: 460, height: 680),
                                 configuration: {
                                     let c = WKWebViewConfiguration()
-                                    c.websiteDataStore = .default()
+                                    c.websiteDataStore = dataStore
                                     return c
                                 }())
         loginWV.customUserAgent = webView.customUserAgent
@@ -142,8 +147,6 @@ final class KimiWebSession: NSObject {
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 680),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "登录 Kimi"
-        // 局部变量 window 持有窗口直到函数返回；若窗口在 close() 时自行释放，
-        // 该强引用会指向已释放内存，导致自动释放池 drain 时过度释放崩溃。
         window.isReleasedWhenClosed = false
         window.contentView = loginWV
         window.center()
@@ -153,16 +156,12 @@ final class KimiWebSession: NSObject {
 
         loginWV.load(URLRequest(url: URL(string: "https://www.kimi.com/")!))
 
-        // 轮询 access_token；最多 5 分钟
         for _ in 0..<300 {
             try? await Task.sleep(for: .seconds(1))
             if window.isVisible == false { break }
             if let tok = (try? await loginWV.evaluateJavaScript(
                 "localStorage.getItem('access_token')")) as? String, !tok.isEmpty {
-                Self.isLoggedIn = true
-                // 登录 WebView 写入 localStorage 到持久 data store、再到常驻 WebView
-                // 可见有微小时序窗口；重载常驻 WebView 并确认能读到 token 后再返回，
-                // 避免登录后首次 fetch 因 token 尚未同步而 401。
+                isLoggedIn = true
                 for _ in 0..<3 {
                     await load(membershipHome, in: webView)
                     if await readAccessToken(in: webView)?.isEmpty == false { break }
@@ -175,8 +174,8 @@ final class KimiWebSession: NSObject {
     }
 
     func logout() async {
-        Self.isLoggedIn = false
-        let store = WKWebsiteDataStore.default()
+        isLoggedIn = false
+        let store = dataStore
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let records = await store.dataRecords(ofTypes: types)
         let kimi = records.filter { $0.displayName.localizedCaseInsensitiveContains("kimi") }

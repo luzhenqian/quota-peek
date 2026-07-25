@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 enum ProviderFactory {
     static func make(preferences: AppPreferences, glmAPIKey: String?, grokCookie: String?) -> [any ProviderProbe] {
         var probes: [any ProviderProbe] = []
@@ -10,7 +11,7 @@ enum ProviderFactory {
             probes.append(ClaudeProbe(executablePath: preferences.claudeExecutable))
         }
         if preferences.kimiEnabled {
-            if KimiWebSession.isLoggedIn {
+            if KimiWebSession.shared.isLoggedIn {
                 probes.append(KimiWebProbe())
             } else {
                 probes.append(KimiProbe(executablePath: preferences.kimiExecutable))
