@@ -165,7 +165,8 @@ enum SnapshotSource: String, Codable, Sendable {
 }
 
 struct ProviderSnapshot: Identifiable, Hashable, Codable, Sendable {
-    var id: ProviderID { provider }
+    var id: UUID { accountID }
+    var accountID: UUID = UUID()
     var provider: ProviderID
     var windows: [QuotaWindow]
     var balance: ProviderBalance?
@@ -194,17 +195,20 @@ struct ProviderSnapshot: Identifiable, Hashable, Codable, Sendable {
     }
 
     static func failure(
+        accountID: UUID = UUID(),
         provider: ProviderID,
+        label: String? = nil,
         message: String,
         source: SnapshotSource,
         previous: ProviderSnapshot? = nil
     ) -> ProviderSnapshot {
         var snapshot = previous ?? ProviderSnapshot(
+            accountID: accountID,
             provider: provider,
             windows: [],
             balance: nil,
             plan: nil,
-            account: nil,
+            account: label,
             source: source,
             capturedAt: Date(),
             errorMessage: nil
