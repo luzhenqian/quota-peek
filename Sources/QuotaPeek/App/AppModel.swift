@@ -138,15 +138,20 @@ final class AppModel: ObservableObject {
             return collected
         }
 
-        let accountsByID = Dictionary(uniqueKeysWithValues: currentPreferences.accounts.map { ($0.id, $0) })
+        // Refresh may take long enough for account settings to change while probes are in flight.
+        // Reconcile against the live preferences so a removed/disabled account cannot be
+        // resurrected in SnapshotStore, and a renamed account uses its current identity.
+        let accountsByID = Dictionary(uniqueKeysWithValues: preferences.accounts.map { ($0.id, $0) })
         var updated = snapshots.filter { snapshot in
             guard let account = accountsByID[snapshot.accountID] else { return false }
             return !account.enabled
         }
         for result in results {
+            guard let account = accountsByID[result.account.id], account.enabled else { continue }
             if var snapshot = result.snapshot {
-                snapshot.accountID = result.account.id
-                snapshot.account = result.account.label
+                snapshot.accountID = account.id
+                snapshot.provider = account.provider
+                snapshot.account = account.label
                 updated.append(snapshot)
                 if preferences.notificationsEnabled {
                     NotificationManager.notifyIfNeeded(
@@ -155,19 +160,19 @@ final class AppModel: ObservableObject {
                     )
                 }
             } else {
-                let previous = snapshots.first(where: { $0.accountID == result.account.id })
+                let previous = snapshots.first(where: { $0.accountID == account.id })
                 var failure = ProviderSnapshot.failure(
-                    accountID: result.account.id,
-                    provider: result.account.provider,
-                    label: result.account.label,
+                    accountID: account.id,
+                    provider: account.provider,
+                    label: account.label,
                     message: result.errorMessage ?? "未知错误",
                     source: result.source,
                     previous: previous
                 )
                 // `failure(previous:)` 保留上一份数据；账号身份仍必须以本轮的账号配置为准。
-                failure.accountID = result.account.id
-                failure.provider = result.account.provider
-                failure.account = result.account.label
+                failure.accountID = account.id
+                failure.provider = account.provider
+                failure.account = account.label
                 updated.append(failure)
             }
         }
