@@ -93,12 +93,12 @@ open dist/QuotaPeek.app
 
 首次启动后点菜单栏图标 → 弹窗底部「设置」：
 
-1. 关闭不需要监控的 Provider。
-2. CLI 路径通常留空即可自动检测；也可填绝对路径。
-3. **Kimi 网页账号**：点「登录 Kimi 网页账号」，用平时的方式登录一次，即可显示套餐名与月度额度；点「退出登录」回退到 CLI。
-4. **GLM**：填写 Base URL（`https://open.bigmodel.cn` 或 `https://api.z.ai`）并保存 Coding Plan API Key。
-5. **Grok**：从浏览器开发者工具复制 grok.com 的 Cookie 粘贴保存（详见上方「关于 Grok 的数据源」）。
-5. 设置刷新间隔、低额度阈值、是否启动即显示悬浮面板。
+1. CLI 路径通常留空即可自动检测；也可在顶部填写绝对路径。
+2. 每个 Provider 区块按账号显示：可修改账号名，用账号行右侧的开关单独启停，或删除该账号。
+3. **Codex / Claude / Kimi**：点「+ 添加账号」后会打开 Terminal，在隔离的 CLI 登录目录中完成登录。
+4. **Kimi 网页额度**：在对应 Kimi 账号行点「追加网页登录」，用平时的方式登录后即可显示套餐名与月度额度；点「退出网页登录」会让该账号回退到 CLI。
+5. **GLM / Grok**：新增账号时分别填写 Base URL 与 Coding Plan API Key、grok.com Cookie；已有账号也可在账号行重新填写并保存凭证。
+6. 在「刷新与提醒」中设置刷新间隔、低额度阈值、是否启动即显示悬浮面板。
 
 如果 GLM 凭证已配置在 `~/.claude/settings.json` 的 `ANTHROPIC_AUTH_TOKEN` 中，QuotaPeek 也会自动读取该本地配置。
 
