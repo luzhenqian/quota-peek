@@ -19,6 +19,7 @@ QuotaPeek 是一个本地优先的 macOS 菜单栏与桌面悬浮工具，把 Co
   - 进度条按**已用量**填充（越用越满、越红），刷新时间统一显示为「X 天 Y 小时后刷新」。
 - 额度低于 **10% / 20% / 25%** 阈值时发送本地通知。
 - 自动刷新、本地缓存、错误状态保留（接口临时失败时仍显示上一份好数据）。
+- 支持登录时自动启动，可在设置中随时关闭。
 - 凭证只存本机：GLM API Key 与 Grok Cookie 存 macOS 钥匙串，Kimi 网页登录态存 WKWebView 持久存储。
 
 ## 各家数据来源
@@ -97,7 +98,7 @@ open dist/QuotaPeek.app
 3. **Kimi 网页账号**：点「登录 Kimi 网页账号」，用平时的方式登录一次，即可显示套餐名与月度额度；点「退出登录」回退到 CLI。
 4. **GLM**：填写 Base URL（`https://open.bigmodel.cn` 或 `https://api.z.ai`）并保存 Coding Plan API Key。
 5. **Grok**：从浏览器开发者工具复制 grok.com 的 Cookie 粘贴保存（详见上方「关于 Grok 的数据源」）。
-5. 设置刷新间隔、低额度阈值、是否启动即显示悬浮面板。
+6. 设置刷新间隔、低额度阈值、是否启动即显示悬浮面板，以及是否登录时自动启动。
 
 如果 GLM 凭证已配置在 `~/.claude/settings.json` 的 `ANTHROPIC_AUTH_TOKEN` 中，QuotaPeek 也会自动读取该本地配置。
 

@@ -8,16 +8,16 @@ struct QuotaPeekApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuDashboardView(model: model)
+            MenuBarControlsView(model: model)
                 .task { model.start() }
         } label: {
             Label("QuotaPeek", systemImage: model.menuBarSymbol)
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 520, height: 580)
+                .frame(width: 760, height: 620)
         }
     }
 }

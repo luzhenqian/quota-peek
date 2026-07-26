@@ -1,55 +1,45 @@
 import AppKit
 import SwiftUI
 
-struct MenuDashboardView: View {
+struct MenuBarControlsView: View {
     @ObservedObject var model: AppModel
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        VStack(spacing: 0) {
-            DashboardHeader(model: model, compact: false)
-                .padding(.horizontal, 18)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
-
-            Divider().opacity(0.55)
-
-            ScrollView {
-                ProviderCards(model: model)
-                    .padding(14)
-            }
-
-            Divider().opacity(0.55)
-
-            HStack {
-                Button {
-                    model.toggleFloatingPanel()
-                } label: {
-                    Label(
-                        FloatingPanelManager.shared.isVisible ? "隐藏悬浮窗" : "显示悬浮窗",
-                        systemImage: "macwindow.on.rectangle"
-                    )
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                Button("设置") {
-                    openSettings()
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                .buttonStyle(.plain)
-                Divider().frame(height: 14)
-                Button("退出") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 11)
+        Button {
+            model.toggleFloatingPanel()
+        } label: {
+            Label(
+                FloatingPanelManager.shared.isVisible ? "隐藏悬浮窗" : "显示悬浮窗",
+                systemImage: "macwindow.on.rectangle"
+            )
         }
-        .frame(width: 420, height: 600)
-        .background(.ultraThinMaterial)
+
+        Button {
+            Task { await model.refreshAll() }
+        } label: {
+            Label(model.isRefreshing ? "正在刷新…" : "立即刷新", systemImage: "arrow.clockwise")
+        }
+        .disabled(model.isRefreshing)
+        .keyboardShortcut("r")
+
+        Divider()
+
+        Button {
+            openSettings()
+            NSApp.activate(ignoringOtherApps: true)
+        } label: {
+            Label("设置…", systemImage: "gearshape")
+        }
+
+        Divider()
+
+        Button {
+            NSApplication.shared.terminate(nil)
+        } label: {
+            Label("退出余量", systemImage: "power")
+        }
+        .keyboardShortcut("q")
     }
 }
 
@@ -74,6 +64,383 @@ struct FloatingDashboardView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(.primary.opacity(0.14), lineWidth: 1)
         }
+    }
+}
+
+struct FloatingPanelRootView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject private var panelManager = FloatingPanelManager.shared
+
+    var body: some View {
+        if panelManager.isCollapsed {
+            FloatingEngineDock(model: model)
+        } else {
+            FloatingDashboardView(model: model)
+        }
+    }
+}
+
+struct FloatingEngineDock: View {
+    @ObservedObject var model: AppModel
+    @State private var coreHovering = false
+
+    private var selectedSnapshots: [ProviderSnapshot] {
+        let all = model.visibleSnapshots
+        let recommended = all.first { $0.provider == model.recommendedProvider }
+        let urgent = all
+            .filter { $0.provider != model.recommendedProvider }
+            .sorted {
+                ($0.minimumRemainingPercent ?? -1) < ($1.minimumRemainingPercent ?? -1)
+            }
+
+        var selected = Array(urgent.prefix(recommended == nil ? 4 : 3))
+        if let recommended { selected.append(recommended) }
+        return selected
+    }
+
+    private var overflowCount: Int {
+        max(0, model.visibleSnapshots.count - selectedSnapshots.count)
+    }
+
+    var body: some View {
+        ZStack {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17,
+                bottomLeadingRadius: 17,
+                bottomTrailingRadius: 42,
+                topTrailingRadius: 42,
+                style: .continuous
+            )
+            .fill(.thickMaterial)
+
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17,
+                bottomLeadingRadius: 17,
+                bottomTrailingRadius: 42,
+                topTrailingRadius: 42,
+                style: .continuous
+            )
+                .stroke(
+                    LinearGradient(
+                        colors: [.cyan.opacity(0.62), .indigo.opacity(0.24), .white.opacity(0.08)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+
+            HStack(spacing: 7) {
+                fuelRail
+
+                EngineCore(
+                    remaining: model.overallRemainingPercent ?? 100,
+                    isRefreshing: model.isRefreshing,
+                    isHovering: coreHovering
+                ) {
+                    FloatingPanelManager.shared.expand()
+                }
+                .onHover { coreHovering = $0 }
+            }
+            .padding(8)
+        }
+        .frame(width: 252, height: 108)
+        .help("AI 配额引擎 · 点击核心展开")
+    }
+
+    private var fuelRail: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(model.isRefreshing ? Color.cyan : Color.green)
+                    .frame(width: 5, height: 5)
+                    .shadow(color: model.isRefreshing ? .cyan : .green, radius: 3)
+                Text(model.isRefreshing ? "SYNCING ENGINE" : "AI FUEL BUS")
+                    .font(.system(size: 7, weight: .bold, design: .rounded))
+                    .tracking(0.7)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(model.visibleSnapshots.count) MODULES")
+                    .font(.system(size: 6.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 4)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.black.opacity(0.22))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                    }
+
+                VortexFuelManifold(
+                    remaining: model.overallRemainingPercent ?? 100,
+                    isRefreshing: model.isRefreshing
+                )
+                    .frame(height: 11)
+                    .padding(.horizontal, 5)
+
+                HStack(spacing: 4) {
+                    ForEach(Array(selectedSnapshots.enumerated()), id: \.offset) { _, snapshot in
+                        FuelCartridge(
+                            snapshot: snapshot,
+                            isDocked: snapshot.provider == model.recommendedProvider
+                        )
+                    }
+
+                    if overflowCount > 0 {
+                        VStack(spacing: 2) {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("+\(overflowCount)")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(width: 23, height: 60)
+                        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+            }
+        }
+        .frame(width: 160)
+        .frame(maxHeight: .infinity)
+    }
+}
+
+private struct FuelCartridge: View {
+    let snapshot: ProviderSnapshot
+    let isDocked: Bool
+    @State private var isHovering = false
+
+    private var remaining: Double {
+        snapshot.headlineWindow?.remainingPercent ?? 0
+    }
+
+    var body: some View {
+        VStack(spacing: 2.5) {
+            ZStack(alignment: .topTrailing) {
+                ProviderLogoView(provider: snapshot.provider, logoSize: 11)
+                    .frame(width: 16, height: 16)
+                    .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 4))
+
+                if snapshot.account?.isEmpty == false {
+                    Circle()
+                        .fill(.cyan)
+                        .frame(width: 4, height: 4)
+                        .offset(x: 2, y: -2)
+                }
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(0.38))
+
+                    VStack(spacing: 5) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Rectangle()
+                                .fill(.white.opacity(0.08))
+                                .frame(height: 0.5)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(QuotaColor.forRemaining(remaining).gradient)
+                        .frame(height: max(2, geometry.size.height * remaining / 100))
+                        .overlay(alignment: .top) {
+                            Rectangle()
+                                .fill(.white.opacity(0.42))
+                                .frame(height: 1)
+                        }
+                        .shadow(color: QuotaColor.forRemaining(remaining).opacity(0.55), radius: 3)
+
+                    LinearGradient(
+                        colors: [.white.opacity(0.2), .clear, .black.opacity(0.12)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
+            .frame(width: 16, height: 29)
+
+            Text("\(Int(remaining.rounded()))%")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(QuotaColor.forRemaining(remaining))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(width: 24, height: 9)
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 3)
+        .background(
+            LinearGradient(
+                colors: [.white.opacity(isHovering ? 0.18 : 0.13), .white.opacity(0.03)],
+                startPoint: .top,
+                endPoint: .bottom
+            ),
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(isDocked ? Color.cyan.opacity(0.95) : Color.white.opacity(0.12), lineWidth: isDocked ? 1.4 : 0.8)
+        }
+        .overlay(alignment: .trailing) {
+            if isDocked {
+                Capsule()
+                    .fill(.cyan)
+                    .frame(width: 4, height: 16)
+                    .offset(x: 4)
+                    .shadow(color: .cyan, radius: 4)
+            }
+        }
+        .offset(y: isHovering ? -2 : 0)
+        .scaleEffect(isHovering ? 1.04 : 1)
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .shadow(color: isDocked ? .cyan.opacity(0.38) : .clear, radius: 5)
+        .onHover { isHovering = $0 }
+        .help(cartridgeHelp)
+        .frame(width: 27)
+    }
+
+    private var cartridgeHelp: String {
+        let account = snapshot.account.map { " · \($0)" } ?? ""
+        return "\(snapshot.provider.shortName)\(account) · 剩余 \(Int(remaining.rounded()))%"
+    }
+}
+
+private struct EngineCore: View {
+    let remaining: Double
+    let isRefreshing: Bool
+    let isHovering: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color(white: 0.18), Color(white: 0.07), Color.black.opacity(0.86)],
+                            center: .center,
+                            startRadius: 2,
+                            endRadius: 38
+                        )
+                    )
+
+                Circle()
+                    .stroke(.white.opacity(0.1), lineWidth: 5)
+
+                Circle()
+                    .trim(from: 0, to: max(0.015, remaining / 100))
+                    .stroke(
+                        QuotaColor.forRemaining(remaining).gradient,
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: QuotaColor.forRemaining(remaining).opacity(0.7), radius: 4)
+
+                EngineTickRing()
+                    .stroke(.white.opacity(0.25), lineWidth: 1)
+                    .padding(7)
+
+                TimelineView(.animation(minimumInterval: 1 / 60)) { timeline in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    let speed = isRefreshing ? 320.0 : 32.0
+
+                    EngineRotor()
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.cyan.opacity(0.98), .blue, .indigo],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .padding(14)
+                        .rotationEffect(.degrees(time * speed))
+                        .drawingGroup()
+                }
+
+                TimelineView(.animation(minimumInterval: 1 / 60)) { timeline in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    let pulse = (sin(time * (isRefreshing ? 9.5 : 4.2)) + 1) / 2
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [.white, .cyan, .blue],
+                                center: .topLeading,
+                                startRadius: 0,
+                                endRadius: 7
+                            )
+                        )
+                        .frame(width: 9 + pulse * 1.4, height: 9 + pulse * 1.4)
+                        .shadow(color: .cyan, radius: 4 + pulse * 3)
+                }
+
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.white.opacity(isHovering ? 0.9 : 0))
+                    .offset(y: 23)
+            }
+            .scaleEffect(isHovering ? 1.06 : 1)
+            .animation(.easeOut(duration: 0.15), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 68, height: 68)
+        .help("展开额度面板")
+    }
+}
+
+private struct EngineTickRing: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let outer = min(rect.width, rect.height) / 2
+        let inner = outer - 3
+        var path = Path()
+
+        for index in 0..<16 {
+            let angle = CGFloat(index) * 2 * .pi / 16
+            path.move(to: CGPoint(x: center.x + cos(angle) * inner, y: center.y + sin(angle) * inner))
+            path.addLine(to: CGPoint(x: center.x + cos(angle) * outer, y: center.y + sin(angle) * outer))
+        }
+        return path
+    }
+}
+
+private struct EngineRotor: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let outerRadius = min(rect.width, rect.height) * 0.36
+        let innerRadius = outerRadius * 0.42
+        var path = Path()
+
+        for index in 0..<6 {
+            let angle = CGFloat(index) * .pi / 3
+            let nextAngle = angle + .pi / 7
+            path.move(to: CGPoint(
+                x: center.x + cos(angle) * innerRadius,
+                y: center.y + sin(angle) * innerRadius
+            ))
+            path.addQuadCurve(
+                to: CGPoint(
+                    x: center.x + cos(nextAngle) * outerRadius,
+                    y: center.y + sin(nextAngle) * outerRadius
+                ),
+                control: CGPoint(
+                    x: center.x + cos(angle + .pi / 12) * outerRadius,
+                    y: center.y + sin(angle + .pi / 12) * outerRadius
+                )
+            )
+            path.addLine(to: center)
+            path.closeSubpath()
+        }
+        return path
     }
 }
 
@@ -141,6 +508,15 @@ private struct DashboardHeader: View {
             }
 
             if compact {
+                Button {
+                    FloatingPanelManager.shared.collapse()
+                } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderless)
+                .help("收起为 AI 配额引擎")
+
                 Button {
                     model.toggleFloatingPanel()
                 } label: {

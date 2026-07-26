@@ -16,6 +16,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
     var notificationThreshold = 20
     var notificationsEnabled = true
     var floatingPanelEnabled = true
+    var launchAtLoginEnabled = true
 
     init() {}
 
@@ -36,6 +37,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
         notificationThreshold = try c.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? d.notificationThreshold
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         floatingPanelEnabled = try c.decodeIfPresent(Bool.self, forKey: .floatingPanelEnabled) ?? d.floatingPanelEnabled
+        launchAtLoginEnabled = try c.decodeIfPresent(Bool.self, forKey: .launchAtLoginEnabled) ?? d.launchAtLoginEnabled
     }
 
     func isEnabled(_ provider: ProviderID) -> Bool {

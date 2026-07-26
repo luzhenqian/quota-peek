@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import UserNotifications
 
 @MainActor
@@ -8,6 +9,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var snapshots: [ProviderSnapshot]
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var launchAtLoginStatus = SMAppService.mainApp.status
+    @Published private(set) var launchAtLoginError: String?
     @Published var preferences: AppPreferences {
         didSet {
             PreferencesStore.save(preferences)
@@ -100,6 +103,7 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        syncLaunchAtLogin()
         if preferences.notificationsEnabled {
             Task { await NotificationManager.requestAuthorization() }
         }
@@ -209,6 +213,21 @@ final class AppModel: ObservableObject {
             FloatingPanelManager.shared.show(model: self)
             preferences.floatingPanelEnabled = true
         }
+    }
+
+    func setLaunchAtLoginEnabled(_ enabled: Bool) {
+        do {
+            try LoginItemManager.setEnabled(enabled)
+            preferences.launchAtLoginEnabled = enabled
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = error.localizedDescription
+        }
+        launchAtLoginStatus = LoginItemManager.status
+    }
+
+    private func syncLaunchAtLogin() {
+        setLaunchAtLoginEnabled(preferences.launchAtLoginEnabled)
     }
 
     private func scheduleRefresh(immediate: Bool = false) {
