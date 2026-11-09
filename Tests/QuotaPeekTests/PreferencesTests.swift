@@ -17,4 +17,11 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertFalse(decoded.launchAtLoginEnabled)
     }
+
+    func testDeepSeekDefaultsToEnabledForExistingPreferences() throws {
+        let preferences = try JSONDecoder().decode(AppPreferences.self, from: Data("{}".utf8))
+
+        XCTAssertTrue(preferences.deepSeekEnabled)
+        XCTAssertTrue(preferences.isEnabled(.deepseek))
+    }
 }

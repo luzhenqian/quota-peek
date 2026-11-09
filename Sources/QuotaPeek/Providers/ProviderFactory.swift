@@ -1,7 +1,12 @@
 import Foundation
 
 enum ProviderFactory {
-    static func make(preferences: AppPreferences, glmAPIKey: String?, grokCookie: String?) -> [any ProviderProbe] {
+    static func make(
+        preferences: AppPreferences,
+        glmAPIKey: String?,
+        grokCookie: String?,
+        deepSeekAPIKey: String?
+    ) -> [any ProviderProbe] {
         var probes: [any ProviderProbe] = []
         if preferences.codexEnabled {
             probes.append(CodexProbe(executablePath: preferences.codexExecutable))
@@ -22,6 +27,10 @@ enum ProviderFactory {
         if preferences.grokEnabled {
             // Grok 无 CLI；URLSession 直连 API，带用户粘贴的 grok.com Cookie。
             probes.append(GrokProbe(cookie: grokCookie))
+        }
+        if preferences.deepSeekEnabled {
+            // DeepSeek 没有订阅额度窗口，官方 API 只返回按量计费账户的可用余额。
+            probes.append(DeepSeekProbe(apiKey: deepSeekAPIKey))
         }
         return probes
     }

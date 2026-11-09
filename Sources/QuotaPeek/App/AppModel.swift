@@ -121,7 +121,13 @@ final class AppModel: ObservableObject {
         let currentPreferences = preferences
         let key = SecretStore.read(account: "glm-api-key")
         let grokCookie = SecretStore.read(account: "grok-cookie")
-        let probes = ProviderFactory.make(preferences: currentPreferences, glmAPIKey: key, grokCookie: grokCookie)
+        let deepSeekAPIKey = SecretStore.read(account: "deepseek-api-key")
+        let probes = ProviderFactory.make(
+            preferences: currentPreferences,
+            glmAPIKey: key,
+            grokCookie: grokCookie,
+            deepSeekAPIKey: deepSeekAPIKey
+        )
 
         let cliProbes = probes.filter { $0.source == .cli }
         let independentProbes = probes.filter { $0.source != .cli }
@@ -205,6 +211,18 @@ final class AppModel: ObservableObject {
         SecretStore.read(account: "grok-cookie")?.isEmpty == false
     }
 
+    func saveDeepSeekAPIKey(_ value: String) throws {
+        try SecretStore.save(
+            value.trimmingCharacters(in: .whitespacesAndNewlines),
+            account: "deepseek-api-key"
+        )
+    }
+
+    func hasDeepSeekAPIKey() -> Bool {
+        SecretStore.read(account: "deepseek-api-key")?.isEmpty == false
+            || DeepSeekCredentialResolver.resolve(explicit: nil)?.isEmpty == false
+    }
+
     func toggleFloatingPanel() {
         if FloatingPanelManager.shared.isVisible {
             FloatingPanelManager.shared.hide()
@@ -251,7 +269,7 @@ final class AppModel: ObservableObject {
         switch provider {
         case .codex: .localRPC
         case .claude, .kimi: .cli
-        case .glm, .grok: .officialAPI
+        case .glm, .grok, .deepseek: .officialAPI
         }
     }
 

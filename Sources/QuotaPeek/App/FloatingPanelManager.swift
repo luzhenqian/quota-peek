@@ -8,8 +8,14 @@ final class FloatingPanelManager: ObservableObject {
     @Published private(set) var isCollapsed = false
 
     private var panel: NSPanel?
-    private var expandedSize = NSSize(width: 300, height: 455)
+    private var expandedWidth: CGFloat = 300
     private let collapsedSize = NSSize(width: 252, height: 108)
+    /// 装下全部卡片所需的高度，由 FloatingDashboardView 实测后回传。
+    private var preferredHeight: CGFloat = 455
+
+    private static let minimumExpandedHeight: CGFloat = 140
+    /// 上下各留一点，别让面板顶满屏幕。
+    private static let screenMargin: CGFloat = 48
 
     var isVisible: Bool { panel?.isVisible == true }
 
@@ -31,7 +37,7 @@ final class FloatingPanelManager: ObservableObject {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.hasShadow = false
-        panel.minSize = NSSize(width: 260, height: 300)
+        panel.minSize = NSSize(width: 260, height: Self.minimumExpandedHeight)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.contentView = NSHostingView(rootView: FloatingPanelRootView(model: model))
@@ -54,7 +60,7 @@ final class FloatingPanelManager: ObservableObject {
 
     func collapse() {
         guard let panel, !isCollapsed else { return }
-        expandedSize = panel.frame.size
+        expandedWidth = panel.frame.width
         panel.minSize = collapsedSize
         panel.maxSize = collapsedSize
         withAnimation(.snappy(duration: 0.28)) {
@@ -65,12 +71,33 @@ final class FloatingPanelManager: ObservableObject {
 
     func expand() {
         guard let panel, isCollapsed else { return }
-        panel.minSize = NSSize(width: 260, height: 300)
+        panel.minSize = NSSize(width: 260, height: Self.minimumExpandedHeight)
         panel.maxSize = NSSize(width: 10_000, height: 10_000)
         withAnimation(.snappy(duration: 0.28)) {
             isCollapsed = false
         }
-        animate(panel: panel, to: frameAnchoredAtTopRight(of: panel.frame, size: expandedSize))
+        let size = NSSize(width: expandedWidth, height: resolvedHeight(for: preferredHeight))
+        animate(panel: panel, to: frameAnchoredAtTopRight(of: panel.frame, size: size))
+    }
+
+    /// 内容侧实测的所需高度。窗口据此贴合内容，仅在超出屏幕时才回落到滚动。
+    func updatePreferredHeight(_ height: CGFloat) {
+        guard height > 0 else { return }
+        preferredHeight = height
+
+        guard let panel, !isCollapsed else { return }
+        let target = resolvedHeight(for: height)
+        // 小于 1pt 的抖动不值得重排窗口。
+        guard abs(panel.frame.height - target) > 1 else { return }
+
+        let size = NSSize(width: panel.frame.width, height: target)
+        panel.setFrame(frameAnchoredAtTopRight(of: panel.frame, size: size), display: true)
+    }
+
+    private func resolvedHeight(for height: CGFloat) -> CGFloat {
+        let available = (panel?.screen ?? NSScreen.main)?.visibleFrame.height ?? height
+        let ceiling = max(Self.minimumExpandedHeight, available - Self.screenMargin)
+        return min(max(height, Self.minimumExpandedHeight), ceiling)
     }
 
     private func animate(panel: NSPanel, to frame: NSRect) {

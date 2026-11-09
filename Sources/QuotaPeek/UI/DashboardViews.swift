@@ -43,6 +43,25 @@ struct MenuBarControlsView: View {
     }
 }
 
+/// 把「装下全部卡片所需的高度」从内容侧冒泡到窗口侧。
+private struct PanelContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value += nextValue()
+    }
+}
+
+private extension View {
+    /// 测量自身高度并累加进 PanelContentHeightKey。
+    func measuringPanelHeight() -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: PanelContentHeightKey.self, value: proxy.size.height)
+            }
+        }
+    }
+}
+
 struct FloatingDashboardView: View {
     @ObservedObject var model: AppModel
 
@@ -51,11 +70,19 @@ struct FloatingDashboardView: View {
             DashboardHeader(model: model, compact: true)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
+                .measuringPanelHeight()
 
             ScrollView {
                 ProviderCards(model: model)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 8)
+                    // 测量的是滚动内容本身而非视口，所以不会和窗口尺寸形成反馈循环。
+                    .measuringPanelHeight()
+            }
+        }
+        .onPreferenceChange(PanelContentHeightKey.self) { height in
+            Task { @MainActor in
+                FloatingPanelManager.shared.updatePreferredHeight(height)
             }
         }
         .background(.thickMaterial)
@@ -219,6 +246,10 @@ private struct FuelCartridge: View {
         snapshot.headlineWindow?.remainingPercent ?? 0
     }
 
+    private var standaloneBalance: ProviderBalance? {
+        snapshot.headlineWindow == nil ? snapshot.balance : nil
+    }
+
     var body: some View {
         VStack(spacing: 2.5) {
             ZStack(alignment: .topTrailing) {
@@ -235,45 +266,56 @@ private struct FuelCartridge: View {
             }
 
             GeometryReader { geometry in
-                ZStack(alignment: .bottom) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.black.opacity(0.38))
-
-                    VStack(spacing: 5) {
-                        ForEach(0..<3, id: \.self) { _ in
-                            Rectangle()
-                                .fill(.white.opacity(0.08))
-                                .frame(height: 0.5)
-                        }
+                if let balance = standaloneBalance {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.black.opacity(0.38))
+                        Image(systemName: balance.remaining > 0 ? "banknote.fill" : "exclamationmark.circle.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(balance.remaining > 0 ? Color.mint : Color.red)
+                            .shadow(color: balance.remaining > 0 ? Color.mint.opacity(0.65) : Color.red.opacity(0.65), radius: 3)
                     }
-                    .padding(.horizontal, 2)
+                } else {
+                    ZStack(alignment: .bottom) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.black.opacity(0.38))
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(QuotaColor.forRemaining(remaining).gradient)
-                        .frame(height: max(2, geometry.size.height * remaining / 100))
-                        .overlay(alignment: .top) {
-                            Rectangle()
-                                .fill(.white.opacity(0.42))
-                                .frame(height: 1)
+                        VStack(spacing: 5) {
+                            ForEach(0..<3, id: \.self) { _ in
+                                Rectangle()
+                                    .fill(.white.opacity(0.08))
+                                    .frame(height: 0.5)
+                            }
                         }
-                        .shadow(color: QuotaColor.forRemaining(remaining).opacity(0.55), radius: 3)
+                        .padding(.horizontal, 2)
 
-                    LinearGradient(
-                        colors: [.white.opacity(0.2), .clear, .black.opacity(0.12)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(QuotaColor.forRemaining(remaining).gradient)
+                            .frame(height: max(2, geometry.size.height * remaining / 100))
+                            .overlay(alignment: .top) {
+                                Rectangle()
+                                    .fill(.white.opacity(0.42))
+                                    .frame(height: 1)
+                            }
+                            .shadow(color: QuotaColor.forRemaining(remaining).opacity(0.55), radius: 3)
+
+                        LinearGradient(
+                            colors: [.white.opacity(0.2), .clear, .black.opacity(0.12)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
                 }
             }
             .frame(width: 16, height: 29)
 
-            Text("\(Int(remaining.rounded()))%")
+            Text(standaloneBalance?.compactFormattedRemaining ?? "\(Int(remaining.rounded()))%")
                 .font(.system(size: 8, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(QuotaColor.forRemaining(remaining))
+                .foregroundStyle(standaloneBalance == nil ? QuotaColor.forRemaining(remaining) : Color.mint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.5)
                 .frame(width: 24, height: 9)
         }
         .padding(.horizontal, 2)
@@ -310,6 +352,9 @@ private struct FuelCartridge: View {
 
     private var cartridgeHelp: String {
         let account = snapshot.account.map { " · \($0)" } ?? ""
+        if let balance = standaloneBalance {
+            return "\(snapshot.provider.shortName)\(account) · 账户余额 \(balance.formattedRemaining) · 按量计费"
+        }
         return "\(snapshot.provider.shortName)\(account) · 剩余 \(Int(remaining.rounded()))%"
     }
 }
@@ -658,13 +703,15 @@ private struct ProviderCard: View {
 
                 Spacer(minLength: 4)
 
-                if let balance = snapshot.balance {
+                if let balance = snapshot.balance, !snapshot.windows.isEmpty {
                     Text(balance.formattedRemaining)
                         .font(.caption.monospacedDigit().weight(.medium))
                 }
             }
 
-            if snapshot.windows.isEmpty {
+            if let balance = snapshot.balance, snapshot.windows.isEmpty {
+                BalanceQuotaView(balance: balance)
+            } else if snapshot.windows.isEmpty {
                 HStack(spacing: 7) {
                     Image(systemName: "info.circle")
                     Text(snapshot.errorMessage ?? "暂无额度数据")
@@ -682,7 +729,7 @@ private struct ProviderCard: View {
                 }
             }
 
-            if let error = snapshot.errorMessage, !snapshot.windows.isEmpty {
+            if let error = snapshot.errorMessage, !snapshot.windows.isEmpty || snapshot.balance != nil {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(.orange)
@@ -737,8 +784,50 @@ private struct ProviderCard: View {
         case .kimi: colors = [.indigo, .purple]
         case .glm: colors = [.blue, .cyan]
         case .grok: colors = [Color(white: 0.35), Color(white: 0.1)]
+        case .deepseek: colors = [.blue, .indigo]
         }
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+/// DeepSeek 一类按量计费 Provider 只有可用金额，没有可用于计算百分比的固定上限。
+private struct BalanceQuotaView: View {
+    let balance: ProviderBalance
+
+    private var tint: Color {
+        balance.remaining > 0 ? .mint : .red
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: balance.remaining > 0 ? "banknote.fill" : "exclamationmark.circle.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("账户余额")
+                    .font(.caption.weight(.semibold))
+                Text(balance.limit == nil ? "按量计费 · 无固定额度上限" : "可用余额")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 6)
+
+            Text(balance.formattedRemaining)
+                .font(.title3.monospacedDigit().weight(.bold))
+                .foregroundStyle(balance.remaining > 0 ? Color.primary : Color.red)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(8)
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        }
     }
 }
 

@@ -74,39 +74,30 @@ enum GLMQuotaParser {
             throw ProbeError.invalidResponse("GLM JSON 格式错误：\(error.localizedDescription)")
         }
 
+        if response.success == false || (response.code.map { $0 != 200 } ?? false) {
+            let message = response.msg ?? "未知错误"
+            throw ProbeError.invalidResponse("GLM 返回错误：\(message)")
+        }
+
         guard let limits = response.data?.limits, !limits.isEmpty else {
             throw ProbeError.invalidResponse("GLM 没有返回 limits")
         }
 
-        let windows = limits.compactMap { item -> QuotaWindow? in
-            let kind: QuotaWindowKind
-            switch (item.type, item.unit) {
-            case ("TIME_LIMIT", _): kind = .tools
-            case ("TOKENS_LIMIT", 3), ("TOKENS_LIMIT", nil): kind = .session
-            case ("TOKENS_LIMIT", 6): kind = .weekly
-            case ("TOKENS_LIMIT", 7): kind = .monthly
-            case ("TOKENS_LIMIT", let unit?): kind = .model("Token 单元 \(unit)")
-            default: return nil
-            }
-
+        let windows = limits.map { item -> QuotaWindow in
             let reset = item.nextResetTime?.date
             return QuotaWindow(
-                kind: kind,
-                remainingPercent: 100 - item.percentage,
+                kind: item.windowKind,
+                remainingPercent: item.remainingPercent,
                 resetsAt: reset,
                 resetDescription: reset?.quotaCountdown
             )
-        }
-
-        guard !windows.isEmpty else {
-            throw ProbeError.invalidResponse("GLM 返回了未知的额度类型")
         }
 
         return ProviderSnapshot(
             provider: .glm,
             windows: windows,
             balance: nil,
-            plan: nil,
+            plan: response.data?.level?.uppercased(),
             account: nil,
             source: .officialAPI,
             capturedAt: capturedAt,
@@ -116,18 +107,62 @@ enum GLMQuotaParser {
 }
 
 private struct GLMQuotaResponse: Decodable {
+    let code: Int?
+    let msg: String?
+    let success: Bool?
     let data: GLMQuotaData?
 }
 
 private struct GLMQuotaData: Decodable {
     let limits: [GLMQuotaItem]?
+    /// 订阅档位，例如 "lite" / "pro" / "max"。
+    let level: String?
 }
 
 private struct GLMQuotaItem: Decodable {
+    /// 线上取值为 "CREDIT_LIMIT"；早期版本见过 "TOKENS_LIMIT" / "TIME_LIMIT"。
+    /// 除 TIME_LIMIT 外一律按周期窗口处理，避免 GLM 改名后整张卡片解析失败。
     let type: String
+    /// 周期单位：3=小时，6=周，7=月。
     let unit: Int?
+    /// 周期长度，配合 unit 使用（unit=3 & number=5 即“每 5 小时”）。
+    let number: Int?
+    /// 该窗口的总额度。
+    let usage: Double?
+    /// 已消耗额度。
+    let currentValue: Double?
+    let remaining: Double?
+    /// 已用百分比（整数粒度）。
     let percentage: Double
     let nextResetTime: FlexibleDate?
+
+    var windowKind: QuotaWindowKind {
+        if type == "TIME_LIMIT" { return .tools }
+        switch unit {
+        case 3, nil:
+            guard let number, number != 5 else { return .session }
+            return .model("\(number) 小时")
+        case 6:
+            guard let number, number != 1 else { return .weekly }
+            return .model("\(number) 周")
+        case 7:
+            guard let number, number != 1 else { return .monthly }
+            return .model("\(number) 个月")
+        case let unit?:
+            return .model("额度单元 \(unit)")
+        }
+    }
+
+    /// 优先用 remaining/usage 计算（percentage 只有整数精度），缺字段时回退到 percentage。
+    var remainingPercent: Double {
+        let value: Double
+        if let usage, usage > 0, let remaining {
+            value = remaining / usage * 100
+        } else {
+            value = 100 - percentage
+        }
+        return min(100, max(0, value))
+    }
 }
 
 private enum FlexibleDate: Decodable {

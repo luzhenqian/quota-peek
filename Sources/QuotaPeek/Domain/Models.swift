@@ -6,6 +6,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
     case kimi
     case glm
     case grok
+    case deepseek
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .kimi: "Kimi"
         case .glm: "GLM Coding Plan"
         case .grok: "Grok"
+        case .deepseek: "DeepSeek"
         }
     }
 
@@ -26,6 +28,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .kimi: "Kimi"
         case .glm: "GLM"
         case .grok: "Grok"
+        case .deepseek: "DeepSeek"
         }
     }
 
@@ -36,6 +39,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .kimi: "moon.stars.fill"
         case .glm: "cube.transparent.fill"
         case .grok: "bolt.horizontal.fill"
+        case .deepseek: "wave.3.right.circle.fill"
         }
     }
 
@@ -46,6 +50,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .kimi: "kimi"
         case .glm: "zhipu"
         case .grok: "grok"
+        case .deepseek: "deepseek"
         }
     }
 
@@ -81,6 +86,8 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok:
             if p.contains("heavy") { return .top }
             if p.contains("super") { return .high }
+            return .base
+        case .deepseek:
             return .base
         }
     }
@@ -154,6 +161,21 @@ struct ProviderBalance: Hashable, Codable, Sendable {
         formatter.maximumFractionDigits = 2
         return formatter.string(from: remaining as NSDecimalNumber)
             ?? "\(currency) \(remaining)"
+    }
+
+    /// 悬浮引擎中的紧凑金额，只用于没有百分比上限的余额型 Provider。
+    var compactFormattedRemaining: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = remaining < 10 ? 2 : 0
+        let amount = formatter.string(from: remaining as NSDecimalNumber) ?? "\(remaining)"
+        let symbol = switch currency.uppercased() {
+        case "CNY": "¥"
+        case "USD": "$"
+        default: "\(currency) "
+        }
+        return symbol + amount
     }
 }
 

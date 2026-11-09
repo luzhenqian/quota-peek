@@ -6,6 +6,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
     var kimiEnabled = true
     var glmEnabled = true
     var grokEnabled = true
+    var deepSeekEnabled = true
 
     var codexExecutable = ""
     var claudeExecutable = ""
@@ -29,6 +30,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
         kimiEnabled = try c.decodeIfPresent(Bool.self, forKey: .kimiEnabled) ?? d.kimiEnabled
         glmEnabled = try c.decodeIfPresent(Bool.self, forKey: .glmEnabled) ?? d.glmEnabled
         grokEnabled = try c.decodeIfPresent(Bool.self, forKey: .grokEnabled) ?? d.grokEnabled
+        deepSeekEnabled = try c.decodeIfPresent(Bool.self, forKey: .deepSeekEnabled) ?? d.deepSeekEnabled
         codexExecutable = try c.decodeIfPresent(String.self, forKey: .codexExecutable) ?? d.codexExecutable
         claudeExecutable = try c.decodeIfPresent(String.self, forKey: .claudeExecutable) ?? d.claudeExecutable
         kimiExecutable = try c.decodeIfPresent(String.self, forKey: .kimiExecutable) ?? d.kimiExecutable
@@ -47,6 +49,7 @@ struct AppPreferences: Codable, Equatable, Sendable {
         case .kimi: kimiEnabled
         case .glm: glmEnabled
         case .grok: grokEnabled
+        case .deepseek: deepSeekEnabled
         }
     }
 }

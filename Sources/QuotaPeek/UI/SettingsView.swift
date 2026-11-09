@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var keyStatus = ""
     @State private var grokCookie = ""
     @State private var grokStatus = ""
+    @State private var deepSeekAPIKey = ""
+    @State private var deepSeekStatus = ""
 
     var body: some View {
         HStack(spacing: 0) {
@@ -85,6 +87,7 @@ struct SettingsView: View {
                 providerToggle("Kimi", detail: "Kimi Coding 与会员额度", isOn: $model.preferences.kimiEnabled)
                 providerToggle("GLM Coding Plan", detail: "智谱 Coding Plan 额度", isOn: $model.preferences.glmEnabled)
                 providerToggle("Grok", detail: "grok.com 模型请求额度", isOn: $model.preferences.grokEnabled)
+                providerToggle("DeepSeek", detail: "API 按量计费账户余额", isOn: $model.preferences.deepSeekEnabled)
             }
 
             Section {
@@ -163,6 +166,31 @@ struct SettingsView: View {
                     configured: model.hasGrokCookie()
                 )
                 Text("从浏览器开发者工具中复制 grok.com 请求的完整 Cookie。Cookie 过期后需要重新保存。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("DeepSeek") {
+                HStack {
+                    SecureField("API Key（保存在 macOS 钥匙串）", text: $deepSeekAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                    Button("保存") {
+                        do {
+                            try model.saveDeepSeekAPIKey(deepSeekAPIKey)
+                            deepSeekAPIKey = ""
+                            deepSeekStatus = "已保存"
+                        } catch {
+                            deepSeekStatus = error.localizedDescription
+                        }
+                    }
+                }
+                credentialStatus(
+                    deepSeekStatus.isEmpty
+                        ? (model.hasDeepSeekAPIKey() ? "已配置凭证" : "尚未配置凭证")
+                        : deepSeekStatus,
+                    configured: model.hasDeepSeekAPIKey()
+                )
+                Text("使用官方余额接口读取按量计费账户的可用余额；DeepSeek 没有订阅额度上限。也可通过 DEEPSEEK_API_KEY 环境变量配置。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

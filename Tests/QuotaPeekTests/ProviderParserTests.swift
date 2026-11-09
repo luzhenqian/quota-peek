@@ -87,6 +87,50 @@ final class ProviderParserTests: XCTestCase {
         XCTAssertNil(try GrokRateLimitParser.window(label: "Grok 4", from: data))
     }
 
+    func testDeepSeekBalanceResponse() throws {
+        let data = Data(#"""
+        {
+          "is_available": true,
+          "balance_infos": [
+            {
+              "currency": "CNY",
+              "total_balance": "110.50",
+              "granted_balance": "10.50",
+              "topped_up_balance": "100.00"
+            }
+          ]
+        }
+        """#.utf8)
+
+        let snapshot = try DeepSeekBalanceParser.parse(data)
+
+        XCTAssertEqual(snapshot.provider, .deepseek)
+        XCTAssertTrue(snapshot.windows.isEmpty)
+        XCTAssertEqual(snapshot.balance?.remaining, Decimal(string: "110.50"))
+        XCTAssertEqual(snapshot.balance?.currency, "CNY")
+        XCTAssertNil(snapshot.balance?.limit)
+        XCTAssertEqual(snapshot.source, .officialAPI)
+    }
+
+    func testDeepSeekZeroBalanceRemainsValid() throws {
+        let data = Data(
+            #"{"is_available":false,"balance_infos":[{"currency":"USD","total_balance":"0.00","granted_balance":"0.00","topped_up_balance":"0.00"}]}"#.utf8
+        )
+
+        let snapshot = try DeepSeekBalanceParser.parse(data)
+
+        XCTAssertEqual(snapshot.balance?.remaining, 0)
+        XCTAssertEqual(snapshot.balance?.currency, "USD")
+    }
+
+    func testDeepSeekMissingBalanceIsRejected() {
+        let data = Data(#"{"is_available":false,"balance_infos":[]}"#.utf8)
+
+        XCTAssertThrowsError(try DeepSeekBalanceParser.parse(data)) { error in
+            XCTAssertTrue("\(error)".contains("balance_infos"), "实际错误：\(error)")
+        }
+    }
+
     func testClaudeUsageWithUsedAndLeftFormats() throws {
         let output = """
         Opus 4.6 · Claude Max
@@ -140,6 +184,44 @@ final class ProviderParserTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first(where: { $0.kind == .session })?.remainingPercent, 87.5)
         XCTAssertEqual(snapshot.windows.first(where: { $0.kind == .weekly })?.remainingPercent, 60)
         XCTAssertEqual(snapshot.windows.first(where: { $0.kind == .tools })?.remainingPercent, 98)
+    }
+
+    /// open.bigmodel.cn 线上实际返回的报文（type 为 CREDIT_LIMIT，带 number/usage/currentValue/remaining/level）。
+    func testGLMCreditLimitResponse() throws {
+        let json = """
+        {"code":200,"msg":"操作成功","data":{"limits":[
+          {"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":28000,"currentValue":7000,"remaining":21000,"percentage":25},
+          {"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":140000,"currentValue":0,"remaining":140000,"percentage":0,"nextResetTime":1786546112994}
+        ],"level":"max"},"success":true}
+        """
+
+        let snapshot = try GLMQuotaParser.parse(Data(json.utf8))
+        XCTAssertEqual(snapshot.windows.count, 2)
+        XCTAssertEqual(snapshot.plan, "MAX")
+
+        let session = try XCTUnwrap(snapshot.windows.first(where: { $0.kind == .session }))
+        XCTAssertEqual(session.remainingPercent, 75)
+        XCTAssertNil(session.resetsAt)
+
+        let weekly = try XCTUnwrap(snapshot.windows.first(where: { $0.kind == .weekly }))
+        XCTAssertEqual(weekly.remainingPercent, 100)
+        XCTAssertEqual(weekly.resetsAt?.timeIntervalSince1970 ?? 0, 1786546112.994, accuracy: 0.01)
+    }
+
+    /// 额度单元未知时应降级成一个具名窗口，而不是整张卡片报错。
+    func testGLMUnknownUnitDegradesInsteadOfThrowing() throws {
+        let json = #"{"data":{"limits":[{"type":"SOMETHING_NEW","unit":99,"number":3,"percentage":40}]}}"#
+        let snapshot = try GLMQuotaParser.parse(Data(json.utf8))
+        XCTAssertEqual(snapshot.windows.count, 1)
+        XCTAssertEqual(snapshot.windows.first?.remainingPercent, 60)
+    }
+
+    /// HTTP 200 但业务码失败时，应把服务端 msg 透出来。
+    func testGLMBusinessErrorSurfacesMessage() {
+        let json = #"{"code":1002,"msg":"令牌已过期","success":false}"#
+        XCTAssertThrowsError(try GLMQuotaParser.parse(Data(json.utf8))) { error in
+            XCTAssertTrue("\(error)".contains("令牌已过期"), "实际错误：\(error)")
+        }
     }
 
     func testRelativeResetParsing() {
